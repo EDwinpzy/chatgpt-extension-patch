@@ -1,0 +1,375 @@
+:root {
+  --bg: #0d0d0d;
+  --surface: #171717;
+  --surface-2: #212121;
+  --surface-3: #2f2f2f;
+  --border: rgba(255, 255, 255, .08);
+  --border-2: rgba(255, 255, 255, .14);
+  --text: #ececec;
+  --dim: #a3a3a3;
+  --faint: #6f6f6f;
+  --ink: #0d0d0d;
+  --accent: #f5f5f5;
+  --danger: #d98b8b;
+  --radius: 12px;
+  --radius-ctl: 8px;
+  --pill: 999px;
+}
+
+* { box-sizing: border-box; }
+
+/* Form controls do not inherit the page font on their own. */
+input, select, textarea, button { font-family: inherit; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  /* One face for the whole settings page: 微软雅黑 first so Chinese and Latin
+     share the same glyphs instead of mixing two fonts in one line. */
+  font: 13px/1.5 "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 188px 1fr;
+  min-height: 100vh;
+}
+
+.nav {
+  border-right: 1px solid var(--border);
+  background: #131313;
+  padding: 16px 10px;
+}
+
+.nav .group {
+  font-size: 11px;
+  color: var(--faint);
+  padding: 6px 10px 8px;
+}
+
+.nav .item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav .item:hover { background: #1c1c1c; color: var(--text); }
+.nav .item.on { background: var(--surface-2); color: var(--text); }
+
+.pane { padding: 28px 32px 48px; max-width: 720px; }
+
+.view h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+.view .desc { margin: 0 0 20px; color: var(--faint); font-size: 12.5px; }
+
+.ico {
+  width: 15px; height: 15px; flex: none;
+  background: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: 15px 15px; mask-size: 15px 15px;
+}
+
+[data-icon="globe"] { -webkit-mask-image: url("icons/globe.svg"); mask-image: url("icons/globe.svg"); }
+[data-icon="sliders"] { -webkit-mask-image: url("icons/sliders.svg"); mask-image: url("icons/sliders.svg"); }
+[data-icon="book"] { -webkit-mask-image: url("icons/book.svg"); mask-image: url("icons/book.svg"); }
+[data-icon="list"] { -webkit-mask-image: url("icons/list.svg"); mask-image: url("icons/list.svg"); }
+[data-icon="captions"] { -webkit-mask-image: url("icons/captions.svg"); mask-image: url("icons/captions.svg"); }
+[data-icon="plus"] { -webkit-mask-image: url("icons/plus.svg"); mask-image: url("icons/plus.svg"); }
+[data-icon="bookmark"] { -webkit-mask-image: url("icons/bookmark.svg"); mask-image: url("icons/bookmark.svg"); }
+[data-icon="sparkles"] { -webkit-mask-image: url("icons/sparkles.svg"); mask-image: url("icons/sparkles.svg"); }
+[data-icon="copy"] { -webkit-mask-image: url("icons/copy.svg"); mask-image: url("icons/copy.svg"); }
+[data-icon="clock"] { -webkit-mask-image: url("icons/clock.svg"); mask-image: url("icons/clock.svg"); }
+[data-icon="folder"] { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
+[data-icon="grip"] { -webkit-mask-image: url("icons/grip.svg"); mask-image: url("icons/grip.svg"); }
+
+.cards { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #141414;
+  cursor: pointer;
+}
+
+.card.on { border-color: var(--border-2); background: var(--surface-2); }
+.card .name { font-size: 12.5px; font-weight: 500; }
+.card .sub { font-size: 11.5px; color: var(--faint); }
+.card .grow { flex: 1; min-width: 0; }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* One width for every card, so the model names line up in a single column. */
+  min-width: 64px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* The badge is the "which model is in use" control, so the two states have to
+ * be obvious at a glance and the inactive one has to look clickable. */
+.tag.on {
+  background: var(--accent);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.tag.action {
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tag.action:hover { color: var(--text); border-color: rgba(255, 255, 255, .28); }
+.card.on { cursor: default; }
+
+/*
+ * The list order is the fallback order, so it is worth arranging by hand. Only
+ * the handle starts a drag: without it, every click on a card would risk
+ * becoming a drag instead of a model switch.
+ */
+.card .grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 26px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--faint);
+  cursor: grab;
+}
+
+.card .grip:hover { color: var(--text); background: var(--surface-3); }
+.card .grip:active { cursor: grabbing; }
+.card .grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.card.dragging { opacity: .45; }
+.card.drop-before { box-shadow: 0 -2px 0 var(--accent); }
+.card.drop-after { box-shadow: 0 2px 0 var(--accent); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover { background: #3a3a3a; }
+.btn.primary { background: var(--accent); color: var(--ink); font-weight: 500; }
+.btn.primary:hover { background: #ffffff; }
+.btn.ghost { background: transparent; border-color: var(--border-2); color: var(--dim); }
+.btn.ghost:hover { color: var(--text); border-color: rgba(255, 255, 255, .24); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.btn.danger { color: var(--danger); }
+
+.btnrow { display: flex; gap: 8px; margin-top: 14px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-of-type { border-bottom: 0; }
+.row .label b { display: block; font-size: 12.5px; font-weight: 500; }
+.row .label span { font-size: 11.5px; color: var(--faint); }
+
+/* The label gives way before the control does, so a long label can never
+ * squeeze a segmented control into wrapping. */
+.row .label { flex: 1 1 auto; min-width: 0; }
+.row > .seg,
+.row > select,
+.row > .field,
+.row > .switch,
+.row > .btn { flex: 0 0 auto; }
+
+.toggle-row {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.switch {
+  width: 36px; height: 20px; flex: none;
+  border: 1px solid var(--border-2);
+  border-radius: var(--pill);
+  background: var(--surface-3);
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+}
+
+.switch i {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #8a8a8a;
+}
+
+.switch.on { background: var(--accent); border-color: var(--accent); }
+.switch.on i { left: auto; right: 2px; background: var(--ink); }
+
+.seg {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  background: #141414;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+}
+
+.seg.wide { width: 100%; margin-bottom: 16px; }
+.seg button {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border: 0;
+  border-radius: var(--pill);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.seg.wide button { flex: 1 1 0; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface-3); color: var(--text); }
+
+select,
+input[type="text"],
+input[type="password"] {
+  height: 32px;
+  min-width: 170px;
+  padding: 0 10px;
+  background: #101010;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+input:focus, select:focus { outline: 1px solid var(--border-2); }
+
+.note { margin: 10px 0 0; font-size: 11.5px; color: var(--faint); }
+.result { margin: 12px 0 0; font-size: 12px; color: var(--dim); white-space: pre-wrap; }
+.result.bad { color: var(--danger); }
+
+.grid-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.grid-table th {
+  text-align: left; font-weight: 500; font-size: 11.5px; color: var(--faint);
+  padding: 0 8px 8px 0;
+}
+.grid-table td { padding: 7px 8px 7px 0; border-top: 1px solid var(--border); }
+.grid-table input { width: 100%; min-width: 0; }
+.grid-table tr.builtin .term { color: var(--dim); }
+.grid-table tr.builtin td { padding-top: 5px; padding-bottom: 5px; }
+.srctag {
+  display: inline-block;
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  color: var(--faint);
+  white-space: nowrap;
+}
+.grid-table .x {
+  width: 28px; height: 28px; border-radius: var(--radius-ctl);
+  border: 1px solid transparent; background: transparent; color: var(--faint);
+  cursor: pointer; font: inherit;
+}
+.grid-table .x:hover { color: var(--danger); border-color: var(--border); }
+
+.sitelist { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 12px; }
+.sitelist .entry {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: #141414;
+  font-size: 12px;
+  color: var(--dim);
+}
+.sitelist .entry button {
+  border: 0; background: transparent; color: var(--faint);
+  cursor: pointer; font: inherit; line-height: 1; padding: 0 2px;
+}
+.sitelist .entry button:hover { color: var(--text); }
+.sitelist input {
+  height: 26px; min-width: 160px; font-size: 12px;
+}
+
+.modal {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .6);
+}
+
+.modal[hidden] { display: none; }
+
+.modal .sheet {
+  width: 420px; max-width: calc(100vw - 40px);
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+}
+
+.modal h2 { margin: 0 0 16px; font-size: 15px; font-weight: 600; }
+.modal label { display: block; margin-bottom: 12px; font-size: 12px; color: var(--dim); }
+.modal label input { display: block; width: 100%; margin-top: 6px; }
+
+/* A bare [hidden] loses to the display rules above, so state it explicitly. */
+.modal [hidden] { display: none !important; }
+
+.modal label select { display: block; width: 100%; margin-top: 6px; }
+
+
+.modal-foot { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.spacer { flex: 1; }

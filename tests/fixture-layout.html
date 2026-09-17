@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Layout fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0b0b; color: #eaeaea;
+    font: 15px/1.7 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  .app { display: flex; min-height: 100vh; }
+  .side { width: 220px; padding: 20px 14px; border-right: 1px solid #232323; }
+  .nav { display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .ico { flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid #4a4a4a; border-radius: 4px; }
+  .label { flex: 1 1 auto; font-size: 13px; color: #b9b9b9; }
+  .clip { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .main { flex: 1; padding: 28px 32px; }
+  .card { border: 1px solid #262626; border-radius: 8px; padding: 18px; max-width: 680px; }
+  .card h2 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0 0 10px; color: #a8a8a8; }
+  .mono { font-family: ui-monospace, Consolas, monospace; color: #cfcfcf; }
+  /* A decorative ghost label sitting on top of the real heading. */
+  .title-wrap { position: relative; }
+  .ghost {
+    position: absolute; left: 10px; top: -6px;
+    font-size: 16px; letter-spacing: 2px; color: #3c3c3c; pointer-events: none;
+  }
+  /* The same echo, but the layer lives in a different wrapper. */
+  .stack { position: relative; margin-top: 14px; }
+  .ghost2 {
+    position: absolute; left: 6px; top: 1px;
+    font-size: 15px; letter-spacing: 1px; color: #3c3c3c; pointer-events: none;
+  }
+  .stack h3 { margin: 0; font-size: 15px; }
+  /* And the echo drawn by CSS instead of an element. */
+  .pseudo-echo { position: relative; margin: 14px 0 0; font-size: 15px; }
+  .pseudo-echo::after {
+    content: "Welcome back, EDwinpzy";
+    position: absolute; left: 2px; top: 1px;
+    color: #3c3c3c; pointer-events: none;
+  }
+  /* An echo whose layer is not a relative at all: it lives several wrappers
+     away, so only the painted stacking order can find it. */
+  .deep { position: relative; margin-top: 14px; }
+  .ghost3 {
+    position: absolute; left: 4px; top: 1px;
+    font-size: 15px; letter-spacing: 1px; color: #3c3c3c; pointer-events: none;
+  }
+  .deep h3 { margin: 0; font-size: 15px; }
+  /* And an echo that keeps its text in an attribute. */
+  .attr-echo { position: relative; margin: 14px 0 0; font-size: 15px; }
+  .attr-echo::before {
+    content: attr(data-echo);
+    position: absolute; left: 3px; top: 2px;
+    color: #3c3c3c; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="nav">
+      <div class="row" id="nav1"><span class="ico"></span><span class="label" id="label1">Overview of your Command Code workspace</span></div>
+      <div class="row" id="nav2"><span class="ico"></span><span class="label" id="label2">Personal profile and preferences</span></div>
+      <div class="row" id="nav3"><span class="ico"></span><span class="label" id="label3">Usage and billing details</span></div>
+      <div class="row" id="nav4"><span class="ico"></span><span class="label clip" id="label4">Overview of your Command Code workspace</span></div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="card">
+      <div class="title-wrap">
+        <span class="ghost" id="cardGhost">USER API KEYS</span>
+        <h2 id="cardTitle">User API Keys</h2>
+      </div>
+      <p id="cardBody">Command Code uses API keys to authenticate users.</p>
+      <p class="mono" id="cardMono">Generate a key to connect with the command line.</p>
+      <div class="stack">
+        <span class="ghost2" aria-hidden="true">Billing details</span>
+        <div class="stack-body">
+          <h3 id="stackTitle">Billing details</h3>
+        </div>
+      </div>
+      <h3 id="pseudoTitle" class="pseudo-echo">Welcome back, EDwinpzy</h3>
+      <div class="deep">
+        <span class="ghost3" aria-hidden="true">Personal profile and preferences</span>
+        <div class="l1"><div class="l2"><div class="l3">
+          <h3 id="deepTitle">Personal profile and preferences</h3>
+        </div></div></div>
+      </div>
+      <h3 id="attrTitle" class="attr-echo" data-echo="Usage and quota">Usage and quota</h3>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,332 @@
+/*
+ * Styles for the 书签整理 pane.
+ *
+ * Same palette, radii and control heights as the rest of the settings page, so
+ * the pane reads as part of it: a summary strip on top, then one block per job,
+ * with the classification preview and the duplicate groups drawn as lists.
+ */
+
+/* A bare [hidden] loses to the display rules below (buttons are inline-flex,
+ * rows are flex), so state it explicitly for anything inside this pane. */
+#view-bookmarks [hidden] { display: none !important; }
+
+/* ------------------------------------------------------------- summary */
+
+.bm-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.bm-stat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #141414;
+  padding: 10px 12px;
+}
+
+.bm-stat b {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bm-stat span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.bm-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.bm-taxonomy {
+  margin: 10px 0 18px;
+  line-height: 1.6;
+}
+
+/* -------------------------------------------------------------- blocks */
+
+.bm-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #141414;
+  padding: 14px 16px 16px;
+  margin-bottom: 12px;
+}
+
+.bm-block-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+
+.bm-block-head .ico {
+  width: 15px;
+  height: 15px;
+  color: var(--dim);
+}
+
+.bm-block-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bm-block-head .bm-meta {
+  margin-left: auto;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One setting per row, the way the 自动 block reads: text on the left, the
+ * control on the right, a hairline between rows. */
+.bm-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.bm-line .label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bm-line .label b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.bm-line .label span {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.bm-line > .btn,
+.bm-line > .switch,
+.bm-line > input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
+.bm-line > input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.bm-line .ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* A control that is not usable yet stays in place, just dimmed. */
+.bm-line .btn:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.bm-line .btn:disabled:hover { background: var(--surface-3); }
+.bm-line .btn.primary:disabled:hover { background: var(--accent); }
+
+.bm-actions { margin-top: 12px; }
+.bm-actions .btn.primary { padding: 0 16px; }
+
+/* ------------------------------------------------------------ progress */
+
+.bm-progress { margin-top: 12px; }
+
+.bm-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.bm-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+
+.bm-progress .bm-meta { margin: 7px 0 0; }
+
+.bm-progress.bm-indeterminate .bm-bar i { width: 35%; }
+
+/* --------------------------------------------------------------- lists */
+
+.bm-preview-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 16px 0 8px;
+}
+
+.bm-preview-head h4 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.bm-preview-head .bm-meta {
+  margin-left: auto;
+  text-align: right;
+}
+
+.bm-tree,
+.bm-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #101010;
+  padding: 8px 10px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.bm-tree:empty,
+.bm-list:empty { display: none; }
+
+.bm-folder { margin: 3px 0; }
+
+.bm-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.bm-folder-head .ico {
+  width: 13px;
+  height: 13px;
+  color: var(--dim);
+}
+
+.bm-count {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.bm-folder-body {
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.bm-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--dim);
+  min-width: 0;
+}
+
+.bm-item > .bm-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bm-fav {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.bm-fav[hidden] { display: none; }
+
+.bm-item.keep {
+  color: var(--text);
+  background: rgba(255, 255, 255, .04);
+}
+
+.bm-item.drop { color: var(--faint); }
+.bm-item.drop > .bm-name { text-decoration: line-through; }
+
+.bm-pill {
+  flex: none;
+  font-size: 10.5px;
+  line-height: 1.6;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 0 7px;
+  color: var(--dim);
+}
+
+.bm-item.keep .bm-pill {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--ink);
+}
+
+.bm-dup {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #141414;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.bm-dup:last-child { margin-bottom: 0; }
+
+.bm-dup-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.bm-reason {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+.bm-dup-stats { margin: 12px 0 0; }
+
+.bm-empty {
+  padding: 14px 2px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.bm-dup-stats { margin: 12px 0 0; }
+
+.bm-line select { flex: 0 0 auto; }
+
+.bm-log { margin: 8px 0 0; }

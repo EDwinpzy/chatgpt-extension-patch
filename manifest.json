@@ -1,0 +1,72 @@
+{
+   "action": {
+      "default_icon": {
+         "16": "images/icon16.png",
+         "32": "images/icon32.png",
+         "48": "images/icon48.png"
+      },
+      "default_title": "ChatGPT"
+   },
+   "background": {
+      "service_worker": "translate/background-loader.js"
+   },
+   "commands": {
+      "_execute_action": {
+         "suggested_key": {
+            "default": "Ctrl+Shift+Period",
+            "mac": "Command+Shift+Period"
+         }
+      },
+      "open-codex-side-panel": {
+         "description": "Open ChatGPT side panel"
+      }
+   },
+   "content_scripts": [ {
+      "matches": [ "http://*/*", "https://*/*" ],
+      "exclude_matches": [ "https://chatgpt.com/*" ],
+      "js": [ "translate/content.js", "translate/subtitle.js", "translate/summary.js" ],
+      "run_at": "document_idle",
+      "all_frames": false
+   }, {
+      "all_frames": false,
+      "js": [ "content-scripts/chatgpt-website.js" ],
+      "matches": [ "https://chatgpt.com/*" ],
+      "run_at": "document_end"
+   }, {
+      "all_frames": true,
+      "js": [ "content-scripts/codex-work-media-permission.js" ],
+      "matches": [ "https://chatgpt.com/*" ],
+      "run_at": "document_start",
+      "world": "MAIN"
+   } ],
+   "content_security_policy": {
+      "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://ab.chatgpt.com https://chatgpt.com https://api.openai.com https://api.openai.org https://api.deepseek.com https://api.commandcode.ai https://opencode.ai https:; font-src 'self' https://cdn.openai.com;",
+      "sandbox": "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src blob:; connect-src 'none';"
+   },
+   "description": "Control your browser with ChatGPT.",
+   "host_permissions": [ "\u003Call_urls>" ],
+   "icons": {
+      "128": "images/icon128.png",
+      "16": "images/icon16.png",
+      "32": "images/icon32.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs65Bm88b45/jV+udQSRvi7h6y9BQ4fzLpFTq3nIl7bb5uk6pSoEbRnOnq1llM/1IbuKG5dJ/IAQ6ATnsGSKQabKaSvzc/Z1xu6qSLnXV456eQvnD3+5cVoTGxSEYg36dyFKbMKmJmmGh13XfeuBT47Rc0IMAFIsdmwW0dt55Fuqt4JKfzKFeomC2+pfjt8K4hRY82+CItb8lPbFlIzl4nBFNzwjZgyigQjvGuagZPpeNUmhgXsoaEYo2BHSdkrJBV0OLBfcCEY9L1PZzGVEBGQ7cJ8+8maklN44SneL25zYR8Cv09pdWlkv7jgaziDamOlGu1kphB4CKT0EuRgOGYQIDAQAB",
+   "manifest_version": 3,
+   "minimum_chrome_version": "116",
+   "name": "ChatGPT",
+   "optional_permissions": [ "downloads.open" ],
+   "options_ui": {
+      "page": "translate/options.html",
+      "open_in_tab": true
+   },
+   "permissions": [ "clipboardWrite", "alarms", "bookmarks", "debugger", "declarativeNetRequestWithHostAccess", "downloads", "favicon", "history", "nativeMessaging", "notifications", "scripting", "sessions", "storage", "tabGroups", "tabs", "topSites", "webNavigation", "contextMenus", "sidePanel" ],
+   "side_panel": {
+      "default_path": "codex-sidepanel/index.html"
+   },
+   "update_url": "https://edge.microsoft.com/extensionwebstorebase/v1/crx",
+   "version": "1.26.901.11451",
+   "web_accessible_resources": [ {
+      "matches": [ "\u003Call_urls>" ],
+      "resources": [ "images/cursor-chat.png" ]
+   } ]
+}

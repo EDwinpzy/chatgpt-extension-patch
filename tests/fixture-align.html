@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Alignment fixture</title>
+<style>
+  body { margin: 24px; background: #111; color: #eee;
+    font: 15px/1.7 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  .card { border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px 16px; margin: 0 0 14px; max-width: 760px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .label { flex: 1 1 auto; }
+  .value { flex: 0 0 auto; color: #9c9; }
+  .badge { border: 1px solid #444; border-radius: 999px; padding: 1px 8px; font-size: 12px; }
+  .btn { border: 1px solid #444; border-radius: 999px; padding: 3px 12px; background: none; color: #eee; }
+  a { color: #9cf; }
+  .ico { display: inline-block; width: 12px; height: 12px; border: 1px solid #666; border-radius: 3px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-top: 1px solid #262626; padding: 4px 0; text-align: left; }
+  /* A decorative echo drawn on top of a heading, like the real page had. */
+  .echo { position: relative; }
+  .echo::after {
+    content: "Echo layer heading"; position: absolute; left: 3px; top: 1px; color: #3c3c3c;
+  }
+</style>
+</head>
+<body>
+
+<div class="card" id="a1">
+  <div class="row"><span class="label" id="a1x">Monthly usage summary</span><span class="value" id="a1y">41 percent used</span></div>
+</div>
+
+<div class="card" id="a2">
+  <span class="badge" id="a2x">Goat plan badge</span>
+  <div class="row"><span id="a2y">Extra credits panel</span></div>
+  <p id="a2z">Credits never expire at all.</p>
+</div>
+
+<div class="card" id="a3">
+  <div class="row"><a href="#" class="btn" id="a3x">Cancel everything now</a><a href="#" class="btn" id="a3y">Change the current plan</a><a href="#" class="btn" id="a3z">Manage billing details</a></div>
+</div>
+
+<div class="card" id="a4">
+  <p id="a4x">Requests on <b>this</b> model cost no credits.</p>
+  <p id="a4y">Laguna is free while capacity lasts.</p>
+</div>
+
+<div class="card" id="a5">
+  <button class="btn" id="a5x"><span class="ico"></span>Buy more credits</button>
+</div>
+
+<div class="card" id="a6">
+  <table>
+    <thead><tr><th id="a6x">Invoice period</th><th id="a6y">Amount charged</th></tr></thead>
+    <tbody><tr><td id="a6z">October first</td><td id="a6w">Ten dollars only</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card" id="a7">
+  <ul><li id="a7x">Workspace members list</li><li id="a7y">Shared credit balance</li></ul>
+  <dl><dt id="a7z">Renewal date</dt><dd id="a7w">Fifteenth of the month</dd></dl>
+</div>
+
+<div class="card" id="a8">
+  <h4 class="echo" id="a8x">Echo layer heading</h4>
+</div>
+
+<div class="card" id="a9">
+  <div class="row"><span class="label" id="a9x">Workspace credits</span><span class="value" id="a9y">Zero dollars</span></div>
+  <p id="a9z">Used after the monthly credits run out.</p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Generated test output
+tests/out/
+
+# Dependencies and build caches
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment
+.env
+.env.local
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

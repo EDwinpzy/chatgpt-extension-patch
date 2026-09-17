@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>网页翻译设置</title>
+<link rel="stylesheet" href="options.css" />
+<link rel="stylesheet" href="../bookmarks/panel.css" />
+</head>
+<body>
+<div class="app">
+  <nav class="nav">
+    <div class="group">网页翻译</div>
+    <button class="item on" data-pane="models"><span class="ico" data-icon="globe"></span>模型</button>
+    <button class="item" data-pane="display"><span class="ico" data-icon="sliders"></span>语言与显示</button>
+    <button class="item" data-pane="glossary"><span class="ico" data-icon="book"></span>术语表</button>
+    <button class="item" data-pane="subtitle"><span class="ico" data-icon="captions"></span>视频字幕</button>
+    <button class="item" data-pane="sites"><span class="ico" data-icon="list"></span>站点规则</button>
+    <div class="group">书签</div>
+    <button class="item" data-pane="bookmarks"><span class="ico" data-icon="bookmark"></span>书签整理</button>
+  </nav>
+
+  <main class="pane">
+    <section class="view" id="view-models">
+      <h1>模型</h1>
+      <p class="desc">和 Codex 的对话模型互相独立，点卡片切换。在用的一档连不上时按下面的顺序自动换下一个，拖左侧把手改顺序。</p>
+      <div id="modelList" class="cards" role="radiogroup" aria-label="翻译用的模型"></div>
+      <button id="addModel" class="btn ghost"><span class="ico" data-icon="plus"></span>添加模型</button>
+
+      <div class="row toggle-row">
+        <div class="label">
+          <b>翻译时关闭思考</b>
+          <span>请求会带上关闭推理的参数，快一些</span>
+        </div>
+        <button id="disableThinking" class="switch" role="switch" aria-checked="true"><i></i></button>
+      </div>
+      <p class="note">网关报错说不认识这些参数时，关掉即可。</p>
+    </section>
+
+    <section class="view" id="view-display" hidden>
+      <h1>语言与显示</h1>
+      <p class="desc">决定翻成什么语言、以及译文怎么呈现。</p>
+
+      <div class="row">
+        <div class="label"><b>目标语言</b><span>划词与整页共用</span></div>
+        <select id="targetLang"></select>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>显示方式</b><span>整页翻译时生效</span></div>
+        <div class="seg" id="displayMode">
+          <button data-value="bilingual" class="on">双语对照</button>
+          <button data-value="replace">仅译文</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>划词自动翻译</b><span>选中即翻译，不用再点一下</span></div>
+        <button id="autoSelection" class="switch" role="switch" aria-checked="true"><i></i></button>
+      </div>
+
+    </section>
+
+    <section class="view" id="view-glossary" hidden>
+      <h1>术语表</h1>
+      <p class="desc">命中的词条强制使用指定译法；原文与译法相同的（如 ChatGPT）保持原文不翻译。</p>
+      <table class="grid-table">
+        <thead><tr><th style="width:42%">原文</th><th>译法</th><th style="width:70px"></th></tr></thead>
+        <tbody id="glossaryBody"></tbody>
+      </table>
+      <div class="btnrow">
+        <button id="addTerm" class="btn ghost"><span class="ico" data-icon="plus"></span>新增</button>
+        <button id="importGlossary" class="btn ghost">导入 CSV</button>
+        <button id="exportGlossary" class="btn ghost">导出</button>
+      </div>
+      <p class="note">CSV 两列（原文、译法），UTF-8；只含自建词条。</p>
+    </section>
+
+    <section class="view" id="view-subtitle" hidden>
+      <h1>视频字幕</h1>
+      <p class="desc">播放器的字幕自动翻译，译文替换掉原本的那行。</p>
+
+      <div class="row">
+        <div class="label"><b>翻译字幕</b><span>有字幕才翻</span></div>
+        <button id="subtitleEnabled" class="switch" role="switch" aria-checked="true"><i></i></button>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>字幕模型</b><span>可以单独选一个更快的</span></div>
+        <select id="subtitleModel"></select>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>字幕字号</b></div>
+        <div class="seg" id="subtitleFontSize">
+          <button data-value="16">小</button>
+          <button data-value="20" class="on">中</button>
+          <button data-value="26">大</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>字幕位置</b><span>下方或上方</span></div>
+        <div class="seg" id="subtitlePosition">
+          <button data-value="bottom" class="on">底部</button>
+          <button data-value="top">顶部</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>最多行数</b><span>超了就压缩</span></div>
+        <div class="seg" id="subtitleMaxLines">
+          <button data-value="1">1 行</button>
+          <button data-value="2" class="on">2 行</button>
+          <button data-value="3">3 行</button>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="view" id="view-sites" hidden>
+      <h1>站点规则</h1>
+      <p class="desc">整页翻译默认对所有网站生效，这里只用来排除例外。</p>
+
+      <div class="row">
+        <div class="label"><b>整页自动翻译</b><span>所有网站都自动翻整页</span></div>
+        <button id="autoTranslateAll" class="switch" role="switch" aria-checked="true"><i></i></button>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>排除的站点</b><span>不自动翻译，也不显示划词气泡</span></div>
+        <span class="tag" id="blockedSiteCount">0 个</span>
+      </div>
+      <div class="sitelist" id="blockedSites"></div>
+
+      <div class="row">
+        <div class="label"><b>翻译缓存</b><span>重复内容不再重复调用模型</span></div>
+        <button id="clearCache" class="btn ghost">清空缓存</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-bookmarks" hidden>
+      <h1>书签整理</h1>
+      <p class="desc">按收藏栏的文件夹归类、清重复，动手前先给预览。</p>
+
+      <div class="bm-stats">
+        <div class="bm-stat"><b id="bmBarCount">—</b><span>书签</span></div>
+        <div class="bm-stat"><b id="bmCategoryCount">—</b><span>文件夹</span></div>
+        <div class="bm-stat"><b id="bmLastRun">—</b><span>上次整理</span></div>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>书签模型</b><span>默认跟随主模型</span></div>
+        <select id="bmModel"></select>
+      </div>
+      <p class="bm-meta bm-taxonomy" id="bmCategories"></p>
+
+      <div class="bm-block">
+        <div class="bm-block-head">
+          <span class="ico" data-icon="sparkles"></span>
+          <h3>一键整理</h3>
+        </div>
+        <div class="bm-line">
+          <div class="label"><b>已归类的书签</b></div>
+          <input type="checkbox" id="bmMoveClassified" checked />
+        </div>
+        <div class="bm-line">
+          <div class="label"><b>整理收藏栏</b></div>
+          <button id="bmOrganize" class="btn primary">开始整理</button>
+        </div>
+        <div class="bm-progress" id="bmProgressBox" hidden>
+          <div class="bm-bar"><i id="bmProgressBar"></i></div>
+          <p class="bm-meta" id="bmProgress"></p>
+        </div>
+        <p class="result" id="bmResult" hidden></p>
+        <div id="bmPreview" hidden>
+          <div class="bm-preview-head">
+            <h4>分类预览</h4>
+            <span class="bm-meta" id="bmPreviewStats"></span>
+          </div>
+          <div class="bm-tree" id="bmTree"></div>
+          <div class="btnrow bm-actions">
+            <button id="bmApply" class="btn primary">确认应用</button>
+            <button id="bmCancelOrganize" class="btn ghost">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bm-block">
+        <div class="bm-block-head">
+          <span class="ico" data-icon="copy"></span>
+          <h3>重复检测</h3>
+        </div>
+        <div class="bm-line">
+          <div class="label"><b>重复书签</b><span>链接或标题相同</span></div>
+          <button id="bmDedupeScan" class="btn ghost">扫描</button>
+        </div>
+        <div class="bm-line" id="bmDedupeRow">
+          <div class="label"><b>找到的重复项</b><span>每组留名字最全的</span></div>
+          <span class="ctl">
+            <button id="bmDedupeRemove" class="btn primary" disabled>删除重复</button>
+            <button id="bmDedupeCancel" class="btn ghost" disabled>取消</button>
+          </span>
+        </div>
+        <p class="bm-meta bm-dup-stats" id="bmDedupeStats"></p>
+        <div class="bm-list" id="bmDedupeList"></div>
+      </div>
+
+      <div class="bm-block">
+        <div class="bm-block-head">
+          <span class="ico" data-icon="clock"></span>
+          <h3>自动</h3>
+        </div>
+        <div class="bm-line">
+          <div class="label"><b>新书签自动分类</b></div>
+          <button id="bmAutoClassify" class="switch" role="switch" aria-checked="false"><i></i></button>
+        </div>
+        <div class="bm-line">
+          <div class="label"><b>定时去重</b></div>
+          <button id="bmAutoDedupe" class="switch" role="switch" aria-checked="false"><i></i></button>
+        </div>
+        <div class="bm-line" id="bmIntervalRow" hidden>
+          <div class="label"><b>扫描频率</b></div>
+          <select id="bmInterval">
+            <option value="1">每小时</option>
+            <option value="6">每 6 小时</option>
+            <option value="24">每天</option>
+            <option value="168">每周</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="bm-meta bm-log" id="bmLastOrganize" hidden></p>
+      <p class="bm-meta bm-log" id="bmLastAutoClassify" hidden></p>
+      <p class="bm-meta bm-log" id="bmLastAutoDedupe" hidden></p>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modelModal" hidden>
+  <div class="sheet">
+    <h2 id="modalTitle">添加模型</h2>
+    <div class="seg wide" id="modelKind">
+      <button data-value="local">本地模型</button>
+      <button data-value="cloud" class="on">云端模型</button>
+    </div>
+
+    <div id="localFields" hidden>
+      <label>模型服务<select id="fieldService"></select></label>
+      <label id="localBaseUrlRow" hidden>服务地址<input id="fieldLocalBaseUrl" type="text" placeholder="http://127.0.0.1:11434/v1" /></label>
+      <label>模型<select id="fieldLocalModel"></select></label>
+      <p class="note" id="localModelHint">选好服务后会自动读取本机已有的模型。</p>
+    </div>
+
+    <div id="cloudFields">
+      <label>服务<select id="fieldCloudService"></select></label>
+
+      <div id="cloudPresetFields">
+        <label>API Key<input id="fieldCloudKey" type="password" placeholder="sk-..." /></label>
+        <label>模型<select id="fieldCloudModel"></select></label>
+        <p class="note" id="cloudModelHint">填好 API Key 后会自动读取这个服务可用的模型。</p>
+      </div>
+
+      <div id="cloudCustomFields" hidden>
+        <label>模型名称<input id="fieldName" type="text" placeholder="例如：我的模型" /></label>
+        <label>Base URL<input id="fieldBaseUrl" type="text" placeholder="https://api.example.com/v1" /></label>
+        <label>API Key<input id="fieldApiKey" type="password" placeholder="sk-..." /></label>
+        <label>模型 ID<input id="fieldModel" type="text" placeholder="deepseek-chat" /></label>
+      </div>
+
+      <!-- Which API this endpoint speaks. Picked by hand, taken literally:
+           whatever is selected here is the only route this model is sent to. -->
+      <label>接口
+        <select id="fieldDialect">
+          <option value="chat">Chat Completions</option>
+          <option value="messages">Messages（Anthropic）</option>
+          <option value="responses">Responses（OpenAI）</option>
+        </select>
+      </label>
+    </div>
+
+    <p class="result" id="testResult" hidden></p>
+    <div class="modal-foot">
+      <button id="testModel" class="btn ghost">测试连接</button>
+      <span class="spacer"></span>
+      <button id="cancelModel" class="btn ghost">取消</button>
+      <button id="saveModel" class="btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="settings.js"></script>
+<script src="options.js"></script>
+<script src="../bookmarks/panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Speed fixture</title>
+<style>
+  body { margin: 20px; background: #111; color: #eee;
+    font: 14px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  p { margin: 0 0 8px; max-width: 640px; }
+</style>
+</head>
+<body>
+<h1>Speed fixture</h1>
+<div id="list"></div>
+<script>
+  /*
+   * Built here rather than written out, so the count is easy to change. The
+   * text is unique per block: a cache hit would otherwise hide the timing.
+   */
+  const COUNT = 200;
+  const list = document.getElementById('list');
+  const fragment = document.createDocumentFragment();
+  for (let index = 1; index <= COUNT; index++) {
+    const block = document.createElement('p');
+    block.textContent = 'Block number ' + index + ' explains the credits and the billing rules for this workspace.';
+    fragment.appendChild(block);
+  }
+  list.appendChild(fragment);
+  window.__blocks = COUNT;
+</script>
+</body>
+</html>
