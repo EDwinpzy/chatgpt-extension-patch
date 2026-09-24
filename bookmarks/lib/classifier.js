@@ -363,8 +363,20 @@ const CATEGORY_DESCRIPTIONS = {
  * @param {Array} categories - 分类体系
  * @returns {string}
  */
-function buildClassifyPrompt(bookmarks, categories) {
+function buildClassifyPrompt(bookmarks, categories, instruction = '') {
   const categoryLines = flattenCategories(categories || DEFAULT_CATEGORIES);
+  const customInstruction = instruction == null ? '' : String(instruction);
+  const hasInstruction = customInstruction.trim().length > 0;
+  const instructionBlock = hasInstruction
+    ? `自定义整理要求：\n${customInstruction}\n\n`
+    : '';
+  const customRule = hasInstruction
+    ? '\n6. 按上方自定义要求逐一判断；仅当书签明确符合删除条件时才返回 action:"delete"，其余书签必须正常分类，不能漏项。'
+    : '';
+  const responseContract = hasInstruction
+    ? `返回JSON数组，每项含id，并且只能二选一：删除时使用{"id":"123","action":"delete"}；保留时使用{"id":"456","category":"AI"}。只有明确要求删除时才能返回action:"delete"。每个书签都必须恰好返回一项。`
+    : `返回JSON数组，每项含id和category，如：
+[{"id":"123","category":"财经"},{"id":"456","category":"AI"},{"id":"789","category":"工具"}]`;
   const categoryList = categoryLines.map(line => {
     const topName = line.split(' > ')[0];
     const desc = CATEGORY_DESCRIPTIONS[topName] ? `（${CATEGORY_DESCRIPTIONS[topName]}）` : '';
@@ -373,7 +385,10 @@ function buildClassifyPrompt(bookmarks, categories) {
 
   const bookmarkList = bookmarks.map((bm, i) => {
     const host = extractHostname(bm.url);
-    return `${i + 1}. [ID:${bm.id}] "${bm.name}" | 域名:${host} | URL:${bm.url}`;
+    const createdAt = hasInstruction
+      ? ` | 创建时间:${formatBookmarkDateAdded(bm.dateAdded)}`
+      : '';
+    return `${i + 1}. [ID:${bm.id}] "${bm.name}"${createdAt} | 域名:${host} | URL:${bm.url}`;
   }).join('\n');
 
   // few-shot 示例（与默认分类体系对应）
@@ -386,7 +401,7 @@ function buildClassifyPrompt(bookmarks, categories) {
     return `示例：${ex.name} (域名:${host}) → "${ex.category}"`;
   }).join('\n');
 
-  return `你是书签分类助手。将以下书签归入给定的分类体系，返回JSON。
+  return `${instructionBlock}你是书签分类助手。将以下书签归入给定的分类体系，返回JSON。
 
 分类体系（可归入一级或子分类，多级用">"连接，括号内为该分类含义）：
 ${categoryList}
@@ -396,15 +411,27 @@ ${categoryList}
 2. 优先归入最具体的子分类；拿不准时归入对应一级分类；
 3. 根据书签名称和URL域名，选择语义最接近的分类；
 4. 仅当书签确实无法归入任何分类、或信息过于模糊时，才归入"工具"；
-5. 不要因为不确定就随意放入"工具"。
+5. 不要因为不确定就随意放入"工具"。${customRule}
 
 ${examples}
 
 书签：
 ${bookmarkList}
 
-返回JSON数组，每项含id和category，如：
-[{"id":"123","category":"财经"},{"id":"456","category":"AI"},{"id":"789","category":"工具"}]`;
+${responseContract}`;
+}
+
+function formatBookmarkDateAdded(dateAdded) {
+  let timestamp;
+  if (typeof dateAdded === 'number' && Number.isFinite(dateAdded)) {
+    timestamp = dateAdded;
+  } else if (typeof dateAdded === 'string' && dateAdded.trim()) {
+    timestamp = Date.parse(dateAdded);
+  }
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '未知';
+  const date = new Date(timestamp);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /**
@@ -583,8 +610,11 @@ function validateCategory(category, validCategories) {
  * @param {Array} validCategories - 合法分类列表
  * @returns {Array} 校验后的结果 [{id, category: string[]}]
  */
-function validateResults(results, validCategories) {
+function validateResults(results, validCategories, allowDeletes = false) {
   return results.map(item => {
+    if (allowDeletes && item.action === 'delete') {
+      return { id: item.id, action: 'delete' };
+    }
     let cat = item.category;
     if (Array.isArray(cat)) {
       cat = cat.join(' > ');
@@ -709,7 +739,7 @@ function parseClassifyPayload(content) {
 
   return parsed
     .filter((item) => item && typeof item === 'object' && item.id !== undefined && item.id !== null)
-    .map((item) => ({ id: String(item.id), category: item.category }));
+    .map((item) => ({ id: String(item.id), category: item.category, action: item.action }));
 }
 
 /*
@@ -846,7 +876,7 @@ async function callClassifyModel(prompt, model, options) {
 /* One batch of bookmarks through the rules and then the model. */
 async function classifyBatch(bookmarks, settings) {
   const categories = settings.categories || DEFAULT_CATEGORIES;
-  const prompt = buildClassifyPrompt(bookmarks, categories);
+  const prompt = buildClassifyPrompt(bookmarks, categories, settings.instruction);
   const raw = await callClassifyModel(prompt, settings.model, settings);
   return parseClassifyPayload(raw);
 }
@@ -861,9 +891,13 @@ async function classifyBatch(bookmarks, settings) {
 async function classifyBookmarks(bookmarks, settings, onProgress) {
   const BATCH_SIZE = 50;
   const validCategories = collectValidCategories(settings.categories || DEFAULT_CATEGORIES);
+  const instruction = settings.instruction == null ? '' : String(settings.instruction);
+  const hasInstruction = instruction.trim().length > 0;
 
   // 确定性规则先行：域名/关键词命中的书签不调用AI，保证准确性并节省API调用
-  const { ruled, unrouted } = applyRules(bookmarks, validCategories);
+  const { ruled, unrouted } = hasInstruction
+    ? { ruled: [], unrouted: bookmarks }
+    : applyRules(bookmarks, validCategories);
   const allResults = [...ruled];
 
   const total = Math.ceil(unrouted.length / BATCH_SIZE);
@@ -880,7 +914,7 @@ async function classifyBookmarks(bookmarks, settings, onProgress) {
     try {
       const batchResult = await classifyBatch(batch, settings);
       // 校验并修正分类（不存在的分类回退"工具"）
-      allResults.push(...validateResults(batchResult, validCategories));
+      allResults.push(...validateResults(batchResult, validCategories, hasInstruction));
     } catch (err) {
       console.error(`批次 ${completed + 1} 分类失败:`, err);
       for (const bm of batch) {

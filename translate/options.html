@@ -163,6 +163,13 @@
           <div class="label"><b>已归类的书签</b></div>
           <input type="checkbox" id="bmMoveClassified" checked />
         </div>
+        <div class="bm-instruction">
+          <label class="bm-instruction-label" for="bmOrganizeInstruction">
+            <b>本次整理要求（可选）</b>
+            <span>仅对本次整理生效；留空时按原有规则整理</span>
+          </label>
+          <textarea id="bmOrganizeInstruction" rows="3" placeholder="例如：删除 2024-01-01 之后添加的书签，仅保留此前添加的书签"></textarea>
+        </div>
         <div class="bm-line">
           <div class="label"><b>整理收藏栏</b></div>
           <button id="bmOrganize" class="btn primary">开始整理</button>
@@ -174,10 +181,17 @@
         <p class="result" id="bmResult" hidden></p>
         <div id="bmPreview" hidden>
           <div class="bm-preview-head">
-            <h4>分类预览</h4>
+            <h4>整理预览</h4>
             <span class="bm-meta" id="bmPreviewStats"></span>
           </div>
           <div class="bm-tree" id="bmTree"></div>
+          <div class="bm-custom-delete" id="bmCustomDeleteSection" hidden>
+            <div class="bm-preview-head bm-custom-delete-head">
+              <h4>按本次要求删除</h4>
+              <span class="bm-meta" id="bmCustomDeleteStats"></span>
+            </div>
+            <div class="bm-list" id="bmCustomDeleteList"></div>
+          </div>
           <div class="btnrow bm-actions">
             <button id="bmApply" class="btn primary">确认应用</button>
             <button id="bmCancelOrganize" class="btn ghost">取消</button>

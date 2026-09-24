@@ -137,6 +137,56 @@
   flex: 0 0 auto;
 }
 
+.bm-instruction {
+  margin-top: 8px;
+  padding: 9px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+.bm-instruction-label {
+  display: block;
+  margin-bottom: 7px;
+}
+
+.bm-instruction-label b,
+.bm-instruction-label span { display: block; }
+
+.bm-instruction-label b {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.bm-instruction-label span {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.bm-instruction textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 68px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: #101010;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.bm-instruction textarea:focus { outline: 1px solid var(--border-2); }
+.bm-instruction textarea::placeholder { color: var(--faint); }
+
+.bm-instruction + .bm-line {
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 0;
+}
+
 /* A control that is not usable yet stays in place, just dimmed. */
 .bm-line .btn:disabled {
   opacity: .4;
@@ -289,6 +339,16 @@
   border-color: transparent;
   background: var(--accent);
   color: var(--ink);
+}
+
+.bm-custom-delete { margin-top: 14px; }
+.bm-custom-delete-head { margin: 0 0 8px; }
+
+.bm-date {
+  flex: none;
+  color: var(--faint);
+  font-size: 10.5px;
+  white-space: nowrap;
 }
 
 .bm-dup {

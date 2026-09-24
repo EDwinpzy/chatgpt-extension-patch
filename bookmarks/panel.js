@@ -113,6 +113,13 @@
     }
   }
 
+  function dateLabel(stamp) {
+    if (stamp === null || stamp === undefined || stamp === '') return '';
+    const date = new Date(stamp);
+    if (!Number.isFinite(date.getTime())) return '';
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' });
+  }
+
   /* Today / yesterday / n days ago, for the summary tile. */
   function relativeDay(stamp) {
     if (!stamp) return '—';
@@ -282,10 +289,20 @@
   function renderPreview() {
     const box = $('bmPreview');
     const tree = $('bmTree');
-    if (!box || !tree) return;
+    const customList = $('bmCustomDeleteList');
+    const customSection = $('bmCustomDeleteSection');
+    if (!box || !tree || !customList || !customSection) return;
     tree.textContent = '';
+    customList.textContent = '';
+    customSection.hidden = true;
+    const customStats = $('bmCustomDeleteStats');
+    if (customStats) customStats.textContent = '';
 
-    if (!preview || !preview.items.length) {
+    const items = preview && Array.isArray(preview.items) ? preview.items : [];
+    const deletions = preview && Array.isArray(preview.deletions) ? preview.deletions : [];
+    const hasCustomInstruction = Boolean(preview && preview.instruction);
+
+    if (!preview || (!items.length && !deletions.length && !hasCustomInstruction)) {
       box.hidden = true;
       const total = preview ? preview.total : 0;
       say('bmResult', total ? '这 ' + total + ' 个书签已经在对应文件夹里了' : '收藏栏里没有可整理的书签');
@@ -295,7 +312,7 @@
 
     // Group by full category path, then rebuild the folder nesting.
     const groups = new Map();
-    for (const item of preview.items) {
+    for (const item of items) {
       const key = item.category.join(' > ');
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(item);
@@ -338,7 +355,25 @@
       }
     }
 
-    const bits = [preview.items.length + ' 个书签 → ' + groups.size + ' 个文件夹'];
+    for (const item of deletions) {
+      const row = bookmarkRow(item, { className: 'drop', pill: '删除' });
+      const date = dateLabel(item.dateAdded);
+      if (date) {
+        const dateNode = document.createElement('span');
+        dateNode.className = 'bm-date';
+        dateNode.textContent = date;
+        dateNode.title = '添加于 ' + date;
+        row.appendChild(dateNode);
+      }
+      customList.appendChild(row);
+    }
+    if (deletions.length) {
+      if (customStats) customStats.textContent = deletions.length + ' 个书签';
+      customSection.hidden = false;
+    }
+
+    const bits = [items.length + ' 个书签 → ' + groups.size + ' 个文件夹'];
+    if (deletions.length || hasCustomInstruction) bits.push('自定义删除 ' + deletions.length + ' 个');
     if (preview.duplicates && preview.duplicates.removeCount) bits.push('删重复 ' + preview.duplicates.removeCount);
     if (preview.skipped) bits.push('跳过 ' + preview.skipped);
     if (preview.unclassified) bits.push('没分类 ' + preview.unclassified);
@@ -392,11 +427,14 @@
 
   async function startOrganize() {
     const button = $('bmOrganize');
+    const instructionInput = $('bmOrganizeInstruction');
+    const instruction = instructionInput ? instructionInput.value.trim() : '';
     say('bmResult', '');
     setBusy(button, true, '正在扫描并分类…');
     showProgress('正在扫描书签…', null);
     try {
-      preview = await ask('organize-preview');
+      preview = await ask('organize-preview', { instruction });
+      preview.instruction = instruction;
       renderPreview();
     } catch (error) {
       preview = null;
@@ -412,16 +450,21 @@
   async function applyOrganize() {
     if (!preview) return;
     const button = $('bmApply');
+    const deletions = Array.isArray(preview.deletions) ? preview.deletions : [];
     setBusy(button, true, '正在应用…');
-    showProgress('正在移动书签…', null);
+    showProgress(deletions.length ? '正在移动并删除书签…' : '正在移动书签…', null);
     try {
       const result = await ask('organize-apply', {
         items: preview.items,
         barId: preview.barId,
         duplicates: preview.duplicates,
+        deletionIds: deletions.map((item) => item.id),
       });
       const parts = ['移动 ' + result.moved];
       if (result.removed) parts.push('删重复 ' + result.removed);
+      if (preview.instruction || deletions.length || result.customDeleted) {
+        parts.push('自定义删除 ' + (Number.isFinite(result.customDeleted) ? result.customDeleted : 0));
+      }
       if (result.merged) parts.push('合并 ' + result.merged);
       if (result.cleaned) parts.push('清空文件夹 ' + result.cleaned);
       if (result.failed) parts.push('失败 ' + result.failed);

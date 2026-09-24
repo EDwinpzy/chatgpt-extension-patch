@@ -103,66 +103,152 @@
    * and change nothing. Everything the apply step needs is in the answer, so a
    * worker restart in between cannot lose it.
    */
-  async function organizePreview(port) {
+  function formatDateAdded(dateAdded) {
+    const timestamp = typeof dateAdded === 'number' ? dateAdded : Date.parse(dateAdded);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  }
+
+  async function organizePreview(port, instruction = '') {
     const settings = await readSettings();
     const model = await resolveModel(settings);
     const barId = await NS.getBookmarkBarId();
     const bar = await NS.getBookmarkBarBookmarks();
     if (!bar.length) throw new Error('收藏栏里还没有书签');
 
+    const customInstruction = instruction == null ? '' : String(instruction);
+    const hasCustomInstruction = customInstruction.trim().length > 0;
     const groups = NS.findDuplicates(bar, { ignoreQuery: false });
-    const keepIds = groups.map((group) => group.recommendedId);
     const removeIds = new Set();
     for (const group of groups) {
       for (const bookmark of group.bookmarks) {
         if (bookmark.id !== group.recommendedId) removeIds.add(bookmark.id);
       }
     }
-    // Duplicates are not classified: they are about to be deleted.
-    const candidates = bar.filter((bookmark) => !removeIds.has(bookmark.id));
+    // In the default flow, duplicates are excluded because they are already
+    // scheduled for removal.
+    // With custom instructions, include duplicates so a rule such as a date
+    // cutoff can choose which copy survives. Unaffected groups still use the
+    // normal dedupe plan after classification.
+    const candidates = hasCustomInstruction ? bar : bar.filter((bookmark) => !removeIds.has(bookmark.id));
     const categories = await currentCategories();
 
     const results = await NS.classifyBookmarks(
       candidates,
-      { categories, model, disableThinking: model.disableThinking },
+      { categories, model, disableThinking: model.disableThinking, instruction: customInstruction },
       (done, total) => {
         post(port, { progress: { done, total } });
       }
     );
 
     const byId = new Map(candidates.map((bookmark) => [bookmark.id, bookmark]));
-    const items = [];
-    let skipped = 0;
+    const resultById = new Map();
+    const deletionIds = new Set();
+    const answeredIds = new Set();
     for (const result of results) {
-      const bookmark = byId.get(result.id);
-      if (!bookmark || !Array.isArray(result.category) || !result.category.length) continue;
-      if (!settings.moveClassified && alreadyClassified(bookmark, result.category)) {
-        skipped++;
+      const bookmark = byId.get(String(result.id));
+      if (!bookmark) continue;
+      answeredIds.add(bookmark.id);
+      if (hasCustomInstruction && result.action === 'delete') {
+        deletionIds.add(bookmark.id);
         continue;
       }
-      items.push({ id: bookmark.id, name: bookmark.name, url: bookmark.url, category: result.category });
+      if (Array.isArray(result.category) && result.category.length) {
+        resultById.set(bookmark.id, result.category);
+      }
+    }
+
+    // If the custom rule selected anything in a duplicate group, its decision
+    // takes precedence over the default "keep the richest title" heuristic.
+    const plannedDuplicateGroups = hasCustomInstruction
+      ? groups.filter((group) => !group.bookmarks.some((bookmark) => deletionIds.has(bookmark.id)))
+      : groups;
+    const plannedDuplicateRemoveIds = new Set();
+    for (const group of plannedDuplicateGroups) {
+      for (const bookmark of group.bookmarks) {
+        if (bookmark.id !== group.recommendedId) plannedDuplicateRemoveIds.add(bookmark.id);
+      }
+    }
+    const plannedKeepIds = plannedDuplicateGroups.map((group) => group.recommendedId);
+
+    const items = [];
+    const deletions = [];
+    let skipped = 0;
+    if (!hasCustomInstruction) {
+      // Keep the original response order and handling when no instruction is set.
+      for (const result of results) {
+        const bookmark = byId.get(result.id);
+        if (!bookmark || !Array.isArray(result.category) || !result.category.length) continue;
+        if (!settings.moveClassified && alreadyClassified(bookmark, result.category)) {
+          skipped++;
+          continue;
+        }
+        items.push({ id: bookmark.id, name: bookmark.name, url: bookmark.url, category: result.category });
+      }
+    } else {
+      for (const bookmark of candidates) {
+        if (deletionIds.has(bookmark.id)) {
+          deletions.push({
+            id: bookmark.id,
+            name: bookmark.name,
+            url: bookmark.url,
+            dateAdded: formatDateAdded(bookmark.dateAdded),
+          });
+          continue;
+        }
+        if (plannedDuplicateRemoveIds.has(bookmark.id)) continue;
+
+        const category = resultById.get(bookmark.id) || ['工具'];
+        if (!settings.moveClassified && alreadyClassified(bookmark, category)) {
+          skipped++;
+          continue;
+        }
+        items.push({ id: bookmark.id, name: bookmark.name, url: bookmark.url, category });
+      }
     }
 
     return {
       barId,
       total: candidates.length,
       items,
+      deletions,
       skipped,
       // Bookmark the model never answered for: left exactly where they are.
-      unclassified: Math.max(0, candidates.length - results.length),
-      duplicates: { groups, keepIds, removeCount: removeIds.size },
+      unclassified: Math.max(0, candidates.length - (hasCustomInstruction ? answeredIds.size : results.length)),
+      duplicates: { groups: plannedDuplicateGroups, keepIds: plannedKeepIds, removeCount: plannedDuplicateRemoveIds.size },
     };
   }
 
   async function organizeApply(message) {
     const barId = message.barId || (await NS.getBookmarkBarId());
-    const out = { removed: 0, moved: 0, failed: 0, merged: 0, cleaned: 0, errors: [] };
+    const out = { removed: 0, customDeleted: 0, moved: 0, failed: 0, merged: 0, cleaned: 0, errors: [] };
 
     const duplicates = message.duplicates;
     if (duplicates && Array.isArray(duplicates.groups) && duplicates.groups.length) {
       const result = await NS.removeDuplicates(duplicates.groups, new Set(duplicates.keepIds || []));
       out.removed = result.removed;
       out.errors.push(...result.errors);
+    }
+
+    const requestedDeletionIds = Array.isArray(message.deletionIds)
+      ? [...new Set(message.deletionIds.filter((id) => typeof id === 'string'))]
+      : [];
+    if (requestedDeletionIds.length) {
+      // Restrict confirmation to bookmarks that are still in the bar. A saved
+      // preview must not delete an item the user has moved elsewhere since.
+      const liveBarIds = new Set((await NS.getBookmarkBarBookmarks()).map((bookmark) => String(bookmark.id)));
+      const eligibleIds = requestedDeletionIds.filter((id) => liveBarIds.has(id));
+      const outcomes = await Promise.all(eligibleIds.map(async (id) => {
+        try {
+          await chrome.bookmarks.remove(id);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: `自定义删除 ${id} 失败：${String((error && error.message) || error)}` };
+        }
+      }));
+      for (const outcome of outcomes) {
+        if (outcome.ok) out.customDeleted++;
+        else out.errors.push(outcome.error);
+      }
     }
 
     const moves = (message.items || [])
@@ -247,7 +333,7 @@
       case 'settings':
         return writeSettings(message.patch || {});
       case 'organize-preview':
-        return organizePreview(port);
+        return organizePreview(port, message.instruction);
       case 'organize-apply':
         return organizeApply(message);
       case 'dedupe-scan':

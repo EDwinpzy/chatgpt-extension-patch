@@ -51,10 +51,16 @@ function startGateway(seen) {
       }
       const prompt = String(((body.messages || [])[1] || {}).content || '');
       const items = [];
-      const line = /\[ID:([^\]]+)\] "([^"]*)"/g;
+      const instructionMatch = prompt.match(/自定义整理要求：[\s\S]*?\n([\s\S]*?)\n\n/);
+      const cutoffMatch = instructionMatch && instructionMatch[1].match(/(\d{4}-\d{2}-\d{2})/);
+      const line = /\[ID:([^\]]+)\] "([^"]*)"(?: \| 创建时间:([^|\n]+))?/g;
       let match;
       while ((match = line.exec(prompt))) {
         const name = match[2];
+        if (cutoffMatch && Date.parse((match[3] || '').trim()) >= Date.parse(cutoffMatch[1] + 'T00:00:00Z')) {
+          items.push({ id: match[1], action: 'delete' });
+          continue;
+        }
         items.push({ id: match[1], category: /股票|行情|A 股/.test(name) ? '财经' : 'AI' });
       }
       response.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -336,6 +342,65 @@ async function main() {
   // that the pane renders a "bookmark -> folder" line at all.
   check('the pane shows the log line', /→\s*(AI|财经)/.test(lastAuto || ''), lastAuto);
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-pane.png'), fullPage: true });
+
+  /* ---- 自定义整理要求: date-based deletions stay in preview until confirmed ---- */
+  // Keep newly planted bookmarks out of the background auto-classifier so the
+  // date-based run sees both copies in the bar, including the duplicate case.
+  await page.click('#bmAutoClassify');
+  await page.waitForTimeout(400);
+  const customDuplicateDates = await worker.evaluate(async () => {
+    const bar = (await chrome.bookmarks.getTree())[0].children.find((child) => child.id === '1');
+    const first = await chrome.bookmarks.create({ parentId: bar.id, title: '按日期删除的重复书签', url: 'https://custom-dup.test/page' });
+    const second = await chrome.bookmarks.create({ parentId: bar.id, title: '按日期删除的重复书签', url: 'https://custom-dup.test/page' });
+    const localDate = (stamp) => {
+      const date = new Date(stamp);
+      const pad = (value) => String(value).padStart(2, '0');
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    };
+    return [first, second].map((bookmark) => ({ id: bookmark.id, date: localDate(bookmark.dateAdded) }));
+  });
+  await page.click('[data-pane="models"]');
+  await page.click('[data-pane="bookmarks"]');
+  await page.waitForTimeout(800);
+  const customInstruction = '只保留 2000-01-01 之前的书签，之后新增的删除';
+  const callsBeforeCustom = seen.length;
+  await page.fill('#bmOrganizeInstruction', customInstruction);
+  await page.click('#bmOrganize');
+  await page.waitForFunction(() => {
+    const box = document.getElementById('bmPreview');
+    const list = document.getElementById('bmCustomDeleteList');
+    return box && !box.hidden && list && list.querySelectorAll('.bm-item').length > 0;
+  }, null, { timeout: 60000 });
+  const customDeleteCount = await page.locator('#bmCustomDeleteList .bm-item').count();
+  const customDuplicateRows = await page.locator('#bmCustomDeleteList .bm-item')
+    .filter({ hasText: '按日期删除的重复书签' }).count();
+  check('custom instruction and bookmark dates reach the model',
+    seen.slice(callsBeforeCustom).some((raw) => raw.includes(customInstruction) && raw.includes('创建时间:')));
+  check('creation dates use the local calendar day shown in the preview',
+    seen.slice(callsBeforeCustom).some((raw) => customDuplicateDates.every((bookmark) =>
+      raw.includes('创建时间:' + bookmark.date + ' |'))));
+  check('newer bookmarks are listed for deletion', customDeleteCount > 0, customDeleteCount + ' item(s)');
+  check('custom date rule previews both copies of a duplicate', customDuplicateRows === 2,
+    customDuplicateRows + ' duplicate row(s)');
+  const beforeCustomApply = await worker.evaluate(READ_TREE);
+  check('custom deletions wait for confirmation', looseTitles(beforeCustomApply).length > 0 ||
+    folderTitles(beforeCustomApply, 'AI').length > 0 || folderTitles(beforeCustomApply, '财经').length > 0);
+  await page.screenshot({ path: path.join(shotDir, 'bookmarks-custom-instruction-preview.png'), fullPage: true });
+
+  await page.click('#bmApply');
+  await page.waitForFunction(() => {
+    const node = document.getElementById('bmResult');
+    return node && !node.hidden && node.textContent.includes('整理完成');
+  }, { timeout: 60000 });
+  const afterCustomApply = await worker.evaluate(READ_TREE);
+  let remainingUrls = 0;
+  const countRemaining = (node) => {
+    if (node.url) remainingUrls++;
+    (node.children || []).forEach(countRemaining);
+  };
+  countRemaining(afterCustomApply);
+  check('confirmed custom deletions remove the selected bookmarks', remainingUrls === 0,
+    remainingUrls + ' bookmark(s) remain');
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   console.log('bookmark gateway calls: ' + seen.length);
