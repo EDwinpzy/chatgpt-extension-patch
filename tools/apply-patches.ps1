@@ -41,12 +41,14 @@ $srcRoot       = Join-Path $projectRoot 'src'
 $hiderSource   = Join-Path $srcRoot 'banner-hide.js'
 $zhSource      = Join-Path $srcRoot 'panel-zh.js'
 $summonSource  = Join-Path $srcRoot 'panel-summary.js'
+$layoutSource  = Join-Path $srcRoot 'model-picker-layout.css'
 $translateSrc  = Join-Path $srcRoot 'translate'
 $bookmarksSrc  = Join-Path $srcRoot 'bookmarks'
 $extensionRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\Default\Extensions'
 $marker        = '<!-- codex-banner-hide -->'
 $scriptTags    = @('<script src="./banner-hide.js"></script>', '<script src="./panel-zh.js"></script>', '<script src="./panel-summary.js"></script>')
 $scriptTag     = $scriptTags[0]
+$layoutTag     = '<link rel="stylesheet" href="./model-picker-layout.css">'
 
 # Appended to the manifest connect-src list. The three named hosts cover the
 # built-in cloud presets; "https:" leaves custom OpenAI-compatible endpoints
@@ -191,20 +193,23 @@ function Apply-PanelPatch {
     Copy-Item -LiteralPath $hiderSource -Destination (Join-Path $panelDir 'banner-hide.js') -Force
     Copy-Item -LiteralPath $zhSource -Destination (Join-Path $panelDir 'panel-zh.js') -Force
     Copy-Item -LiteralPath $summonSource -Destination (Join-Path $panelDir 'panel-summary.js') -Force
+    Copy-Item -LiteralPath $layoutSource -Destination (Join-Path $panelDir 'model-picker-layout.css') -Force
 
     $htmlPath = Join-Path $panelDir 'index.html'
     $html = Get-Content -LiteralPath $htmlPath -Raw -Encoding UTF8
-    $missing = @()
+    $missingScripts = @()
     foreach ($tag in $scriptTags) {
-        if (-not $html.Contains($tag)) { $missing += $tag }
+        if (-not $html.Contains($tag)) { $missingScripts += $tag }
     }
-    if ($missing.Count -eq 0) { return 'panel: already wired' }
+    $missingLayout = -not $html.Contains($layoutTag)
+    if ($missingScripts.Count -eq 0 -and -not $missingLayout) { return 'panel: already wired' }
     $index = $html.IndexOf('<script type="module"', [StringComparison]::Ordinal)
     if ($index -lt 0) {
         throw ('could not find the module script tag in ' + $htmlPath)
     }
     $insert = $marker + [Environment]::NewLine
-    foreach ($tag in $scriptTags) {
+    if ($missingLayout) { $insert += '    ' + $layoutTag + [Environment]::NewLine }
+    foreach ($tag in $missingScripts) {
         $insert += '    ' + $tag + [Environment]::NewLine
     }
     $html = $html.Substring(0, $index) + $insert + '    ' + $html.Substring($index)
@@ -303,6 +308,7 @@ foreach ($required in @(
     $hiderSource,
     $zhSource,
     $summonSource,
+    $layoutSource,
     (Join-Path $translateSrc 'engine.js'),
     (Join-Path $translateSrc 'content.js'),
     (Join-Path $translateSrc 'subtitle.js'),

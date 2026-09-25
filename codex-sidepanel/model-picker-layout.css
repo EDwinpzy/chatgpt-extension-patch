@@ -1,0 +1,25 @@
+@layer components {
+  :has(> [data-model-picker-view-toggle]) {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 300px) {
+    [data-model-picker-view-toggle] > span {
+      position: relative;
+      flex-wrap: wrap;
+      padding-right: 24px;
+    }
+
+    [data-model-picker-view-toggle] > span > [data-effort-only]:not(:first-child) {
+      flex: 0 0 auto;
+      margin-left: auto;
+    }
+
+    [data-model-picker-view-toggle] > span > span:last-child {
+      position: absolute;
+      top: 50%;
+      right: 4px;
+      transform: translateY(-50%);
+    }
+  }
+}
