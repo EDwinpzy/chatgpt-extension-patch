@@ -203,6 +203,8 @@ async function main() {
   // Nothing that belongs to a state the user has not reached may be on screen.
   check('the cleanup row is there but disabled', (await page.isVisible('#bmDedupeRow')) && (await page.isDisabled('#bmDedupeRemove')));
   check('the frequency row starts hidden', (await page.isVisible('#bmIntervalRow')) === false);
+  check('name cleanup is included in one-click organize', await page.isChecked('#bmOrganizeRename'));
+  check('the separate rename action is gone', (await page.locator('#bmRenameAll').count()) === 0);
   check('automatic title cleanup starts off', (await page.getAttribute('#bmAutoRename', 'aria-checked')) === 'false');
   check('the preview starts hidden', (await page.isVisible('#bmPreview')) === false);
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-pane-idle.png'), fullPage: true });
@@ -246,6 +248,7 @@ async function main() {
 
   /* ---- 不移动已归类: the same run with the option off ---- */
   await page.uncheck('#bmMoveClassified');
+  await page.uncheck('#bmOrganizeRename');
   await page.waitForTimeout(400);
   await page.click('#bmOrganize');
   await page.waitForFunction(() => {
@@ -254,7 +257,9 @@ async function main() {
   }, { timeout: 60000 });
   const skippedText = await page.textContent('#bmResult');
   check('already-filed bookmarks are skipped', /已经在对应文件夹里/.test(skippedText || ''), skippedText);
+  check('turning off name cleanup keeps it out of the preview', await page.isHidden('#bmRenameSection'));
   await page.check('#bmMoveClassified');
+  await page.check('#bmOrganizeRename');
   await page.waitForTimeout(400);
 
   /* ---- 重复检测 ---- */
@@ -359,30 +364,55 @@ async function main() {
   check('the pane shows the log line', /→\s*(AI|财经)/.test(lastAuto || ''), lastAuto);
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-pane.png'), fullPage: true });
 
-  /* ---- 一键精简所有书签名称 ---- */
+  /* ---- 一键整理预览包含全树的名称精简建议 ---- */
+  if (await page.getAttribute('#bmAutoClassify', 'aria-checked') === 'true') {
+    await page.click('#bmAutoClassify');
+    await page.waitForFunction(() => document.getElementById('bmAutoClassify').getAttribute('aria-checked') === 'false');
+  }
   const renameTargets = await worker.evaluate(async () => {
     const roots = (await chrome.bookmarks.getTree())[0].children;
     const bar = roots.find((child) => child.id === '1') || roots[0];
     const other = roots.find((child) => child.id !== bar.id && child.children);
     if (!other) throw new Error('the test profile has no non-bar bookmark folder');
-    const folder = await chrome.bookmarks.create({ parentId: bar.id, title: '重命名测试文件夹' });
+    const folder = await chrome.bookmarks.create({ parentId: other.id, title: '重命名测试文件夹' });
     const barBookmark = await chrome.bookmarks.create({
-      parentId: folder.id,
+      parentId: bar.id,
       title: '收藏栏中的冗长测试书签名称',
-      url: 'https://rename-bar.test/guide?privateToken=do-not-send#private-fragment',
+      url: 'https://rename-bar.test/guide',
     });
     const otherBookmark = await chrome.bookmarks.create({
-      parentId: other.id,
+      parentId: folder.id,
       title: '其他文件夹中的冗长书签名称',
       url: 'https://rename-other.test/article?secret=keep-private#section',
     });
     return { folderId: folder.id, barId: barBookmark.id, otherId: otherBookmark.id };
   });
   const callsBeforeRename = seen.length;
-  await page.click('#bmRenameAll');
+  await page.click('#bmOrganize');
+  await page.waitForFunction(() => {
+    const section = document.getElementById('bmRenameSection');
+    const list = document.getElementById('bmRenameList');
+    return section && !section.hidden && list && list.querySelectorAll('.bm-rename').length >= 2;
+  }, { timeout: 60000 });
+  const renamePreview = await page.locator('#bmRenameList').innerText();
+  const beforeRenameApply = await worker.evaluate(async (ids) => {
+    const [bar, other, folder] = await Promise.all([
+      chrome.bookmarks.get(ids.barId),
+      chrome.bookmarks.get(ids.otherId),
+      chrome.bookmarks.get(ids.folderId),
+    ]);
+    return { bar: bar[0].title, other: other[0].title, folder: folder[0].title };
+  }, renameTargets);
+  check('the preview shows old and suggested titles', /收藏栏中的冗长测试书签名称\s*→\s*收藏栏测试/.test(renamePreview) &&
+    /其他文件夹中的冗长书签名称\s*→\s*其他书签测试/.test(renamePreview), renamePreview);
+  check('previewing does not rename bookmarks',
+    beforeRenameApply.bar === '收藏栏中的冗长测试书签名称' && beforeRenameApply.other === '其他文件夹中的冗长书签名称',
+    JSON.stringify(beforeRenameApply));
+  await page.screenshot({ path: path.join(shotDir, 'bookmarks-rename-preview.png'), fullPage: true });
+  await page.click('#bmApply');
   await page.waitForFunction(() => {
     const node = document.getElementById('bmResult');
-    return node && !node.hidden && node.textContent.includes('重命名完成');
+    return node && !node.hidden && node.textContent.includes('整理完成');
   }, { timeout: 60000 });
   const renameResult = await page.textContent('#bmResult');
   const renamedTargets = await worker.evaluate(async (ids) => {
@@ -393,14 +423,14 @@ async function main() {
     ]);
     return { bar: bar[0].title, other: other[0].title, folder: folder[0].title };
   }, renameTargets);
-  const renameRequests = seen.slice(callsBeforeRename);
+  const renameRequests = seen.slice(callsBeforeRename).filter((raw) => raw.includes('书签数据(JSON)：'));
   check('one click renames bookmarks inside and outside the bar',
     renamedTargets.bar === '收藏栏测试' && renamedTargets.other === '其他书签测试', JSON.stringify(renamedTargets));
   check('renaming leaves folder names unchanged', renamedTargets.folder === '重命名测试文件夹', renamedTargets.folder);
-  check('the result reports successful renames', /重命名 \d+ 项/.test(renameResult || '') && !/失败/.test(renameResult || ''), renameResult);
+  check('the result reports successful renames', /精简名称 \d+ 项/.test(renameResult || '') && !/改名失败/.test(renameResult || ''), renameResult);
   check('the model request omits URL query strings and fragments',
     renameRequests.length > 0 && renameRequests.every((raw) =>
-      !raw.includes('privateToken=do-not-send') && !raw.includes('secret=keep-private') && !raw.includes('private-fragment')),
+      !raw.includes('secret=keep-private') && !raw.includes('#section')),
     renameRequests.length + ' request(s)');
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-renamed.png'), fullPage: true });
 

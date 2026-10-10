@@ -262,6 +262,7 @@
       organize
         ? '上次整理 ' + stampLabel(organize.time) + ' · ' + [
             '移动 ' + (organize.moved || 0),
+            organize.renamed ? '精简名称 ' + organize.renamed : '',
             organize.removed ? '删重复 ' + organize.removed : '',
             organize.merged ? '合并 ' + organize.merged : '',
             organize.cleaned ? '清空文件夹 ' + organize.cleaned : '',
@@ -324,10 +325,21 @@
   function renderPreview() {
     const box = $('bmPreview');
     const tree = $('bmTree');
+    const renameSection = $('bmRenameSection');
+    const renameList = $('bmRenameList');
+    const renameStats = $('bmRenameStats');
+    const renameWarning = $('bmRenameWarning');
     const customList = $('bmCustomDeleteList');
     const customSection = $('bmCustomDeleteSection');
-    if (!box || !tree || !customList || !customSection) return;
+    if (!box || !tree || !renameSection || !renameList || !renameStats || !customList || !customSection) return;
     tree.textContent = '';
+    renameList.textContent = '';
+    renameSection.hidden = true;
+    renameStats.textContent = '';
+    if (renameWarning) {
+      renameWarning.hidden = true;
+      renameWarning.textContent = '';
+    }
     customList.textContent = '';
     customSection.hidden = true;
     const customStats = $('bmCustomDeleteStats');
@@ -335,9 +347,11 @@
 
     const items = preview && Array.isArray(preview.items) ? preview.items : [];
     const deletions = preview && Array.isArray(preview.deletions) ? preview.deletions : [];
+    const renames = preview && Array.isArray(preview.renames) ? preview.renames : [];
     const hasCustomInstruction = Boolean(preview && preview.instruction);
+    const hasRenamePlan = Boolean(preview && preview.renameAll && preview.renameTotal > 0);
 
-    if (!preview || (!items.length && !deletions.length && !hasCustomInstruction)) {
+    if (!preview || (!items.length && !deletions.length && !hasCustomInstruction && !hasRenamePlan)) {
       box.hidden = true;
       const total = preview ? preview.total : 0;
       say('bmResult', total ? '这 ' + total + ' 个书签已经在对应文件夹里了' : '收藏栏里没有可整理的书签');
@@ -390,6 +404,30 @@
       }
     }
 
+    if (hasRenamePlan) {
+      renameSection.hidden = false;
+      renameStats.textContent = renames.length + ' 项待改名 · 已检查 ' + preview.renameTotal + ' 项';
+      for (const item of renames) {
+        const row = document.createElement('div');
+        row.className = 'bm-item bm-rename';
+        const before = document.createElement('span');
+        before.className = 'bm-name bm-rename-before';
+        before.textContent = item.oldName || item.id;
+        const arrow = document.createElement('span');
+        arrow.className = 'bm-rename-arrow';
+        arrow.textContent = '→';
+        const after = document.createElement('span');
+        after.className = 'bm-name bm-rename-after';
+        after.textContent = item.name;
+        row.append(before, arrow, after);
+        renameList.appendChild(row);
+      }
+      if (renameWarning && preview.renameUnanswered) {
+        renameWarning.hidden = false;
+        renameWarning.textContent = preview.renameUnanswered + ' 个书签没有拿到有效名称建议；可以继续整理，未建议的名称不会改变。';
+      }
+    }
+
     for (const item of deletions) {
       const row = bookmarkRow(item, { className: 'drop', pill: '删除' });
       const date = dateLabel(item.dateAdded);
@@ -409,6 +447,7 @@
 
     const bits = [items.length + ' 个书签 → ' + groups.size + ' 个文件夹'];
     if (deletions.length || hasCustomInstruction) bits.push('自定义删除 ' + deletions.length + ' 个');
+    if (renames.length) bits.push('精简名称 ' + renames.length + ' 个');
     if (preview.duplicates && preview.duplicates.removeCount) bits.push('删重复 ' + preview.duplicates.removeCount);
     if (preview.skipped) bits.push('跳过 ' + preview.skipped);
     if (preview.unclassified) bits.push('没分类 ' + preview.unclassified);
@@ -464,11 +503,12 @@
     const button = $('bmOrganize');
     const instructionInput = $('bmOrganizeInstruction');
     const instruction = instructionInput ? instructionInput.value.trim() : '';
+    const simplifyNames = Boolean($('bmOrganizeRename') && $('bmOrganizeRename').checked);
     say('bmResult', '');
-    setBusy(button, true, '正在扫描并分类…');
+    setBusy(button, true, simplifyNames ? '正在整理并精简名称…' : '正在扫描并分类…');
     showProgress('正在扫描书签…', null);
     try {
-      preview = await ask('organize-preview', { instruction });
+      preview = await ask('organize-preview', { instruction, simplifyNames });
       preview.instruction = instruction;
       renderPreview();
     } catch (error) {
@@ -487,15 +527,22 @@
     const button = $('bmApply');
     const deletions = Array.isArray(preview.deletions) ? preview.deletions : [];
     setBusy(button, true, '正在应用…');
-    showProgress(deletions.length ? '正在移动并删除书签…' : '正在移动书签…', null);
+    showProgress(preview.renameAll ? '正在整理并更新名称…' : deletions.length ? '正在移动并删除书签…' : '正在移动书签…', null);
     try {
       const result = await ask('organize-apply', {
         items: preview.items,
         barId: preview.barId,
         duplicates: preview.duplicates,
         deletionIds: deletions.map((item) => item.id),
+        renames: preview.renames,
       });
       const parts = ['移动 ' + result.moved];
+      if (preview.renameAll) {
+        parts.push('精简名称 ' + result.renamed + ' 项');
+        if (preview.renameUnanswered) parts.push('无有效建议 ' + preview.renameUnanswered + ' 项');
+        if (result.renameSkipped) parts.push('跳过变化项 ' + result.renameSkipped);
+        if (result.renameFailed) parts.push('改名失败 ' + result.renameFailed);
+      }
       if (result.removed) parts.push('删重复 ' + result.removed);
       if (preview.instruction || deletions.length || result.customDeleted) {
         parts.push('自定义删除 ' + (Number.isFinite(result.customDeleted) ? result.customDeleted : 0));
@@ -504,7 +551,7 @@
       if (result.cleaned) parts.push('清空文件夹 ' + result.cleaned);
       if (result.failed) parts.push('失败 ' + result.failed);
       if (result.errors && result.errors.length) parts.push('报错 ' + result.errors.length);
-      say('bmResult', '整理完成 · ' + parts.join(' · '));
+      say('bmResult', '整理完成 · ' + parts.join(' · '), Boolean(result.failed || result.renameFailed));
       const box = $('bmPreview');
       if (box) box.hidden = true;
       preview = null;
@@ -557,28 +604,6 @@
     }
   }
 
-  async function renameAllBookmarks() {
-    const button = $('bmRenameAll');
-    say('bmResult', '');
-    setBusy(button, true, '正在精简名称…');
-    showProgress('正在扫描全部书签…', null);
-    try {
-      const result = await ask('rename-all');
-      const parts = ['重命名 ' + result.renamed + ' 项'];
-      if (result.unchanged) parts.push('名称已合适 ' + result.unchanged + ' 项');
-      if (result.skipped) parts.push('书签有变化或已删除，跳过 ' + result.skipped + ' 项');
-      if (result.failed) parts.push('失败 ' + result.failed + ' 项');
-      const note = result.errors && result.errors.length ? '；模型提示：' + result.errors[0] : '';
-      say('bmResult', '重命名完成 · ' + parts.join(' · ') + note, Boolean(result.failed));
-      await refresh();
-    } catch (error) {
-      say('bmResult', '重命名失败：' + String(error.message || error), true);
-    } finally {
-      clearProgress();
-      setBusy(button, false);
-    }
-  }
-
   async function saveSettings(patch) {
     try {
       const settings = await ask('settings', { patch });
@@ -612,7 +637,6 @@
 
   click('bmDedupeScan', scanDuplicates);
   click('bmDedupeRemove', removeDuplicates);
-  click('bmRenameAll', renameAllBookmarks);
   click('bmDedupeCancel', () => {
     duplicates = null;
     const list = $('bmDedupeList');

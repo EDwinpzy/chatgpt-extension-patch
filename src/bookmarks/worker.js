@@ -110,12 +110,12 @@
     return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
   }
 
-  async function organizePreview(port, instruction = '') {
+  async function organizePreview(port, instruction = '', simplifyNames = false) {
     const settings = await readSettings();
     const model = await resolveModel(settings);
     const barId = await NS.getBookmarkBarId();
     const bar = await NS.getBookmarkBarBookmarks();
-    if (!bar.length) throw new Error('收藏栏里还没有书签');
+    if (!bar.length && !simplifyNames) throw new Error('收藏栏里还没有书签');
 
     const customInstruction = instruction == null ? '' : String(instruction);
     const hasCustomInstruction = customInstruction.trim().length > 0;
@@ -172,6 +172,33 @@
     }
     const plannedKeepIds = plannedDuplicateGroups.map((group) => group.recommendedId);
 
+    let renames = [];
+    let renameTotal = 0;
+    let renameUnanswered = 0;
+    if (simplifyNames) {
+      const excludedIds = new Set([...deletionIds, ...plannedDuplicateRemoveIds].map(String));
+      const renameCandidates = (await NS.getAllBookmarks())
+        .filter((bookmark) => !excludedIds.has(String(bookmark.id)));
+      renameTotal = renameCandidates.length;
+      const renameResult = await NS.renameBookmarks(
+        renameCandidates,
+        { model, disableThinking: model.disableThinking },
+        (done, total) => post(port, { progress: { kind: 'rename', done, total } })
+      );
+      const bookmarksById = new Map(renameCandidates.map((bookmark) => [String(bookmark.id), bookmark]));
+      renames = renameResult.suggestions.flatMap((suggestion) => {
+        const bookmark = bookmarksById.get(String(suggestion.id));
+        if (!bookmark || suggestion.name === String(bookmark.name || '')) return [];
+        return [{
+          id: String(bookmark.id),
+          oldName: String(bookmark.name || ''),
+          name: suggestion.name,
+          url: bookmark.url,
+        }];
+      });
+      renameUnanswered = Math.max(0, renameCandidates.length - renameResult.suggestions.length);
+    }
+
     const items = [];
     const deletions = [];
     let skipped = 0;
@@ -213,6 +240,10 @@
       total: candidates.length,
       items,
       deletions,
+      renameAll: Boolean(simplifyNames),
+      renameTotal,
+      renames,
+      renameUnanswered,
       skipped,
       // Bookmark the model never answered for: left exactly where they are.
       unclassified: Math.max(0, candidates.length - (hasCustomInstruction ? answeredIds.size : results.length)),
@@ -220,9 +251,21 @@
     };
   }
 
-  async function organizeApply(message) {
+  async function organizeApply(message, port) {
     const barId = message.barId || (await NS.getBookmarkBarId());
-    const out = { removed: 0, customDeleted: 0, moved: 0, failed: 0, merged: 0, cleaned: 0, errors: [] };
+    const out = {
+      removed: 0,
+      customDeleted: 0,
+      moved: 0,
+      failed: 0,
+      renamed: 0,
+      renameUnchanged: 0,
+      renameSkipped: 0,
+      renameFailed: 0,
+      merged: 0,
+      cleaned: 0,
+      errors: [],
+    };
 
     const duplicates = message.duplicates;
     if (duplicates && Array.isArray(duplicates.groups) && duplicates.groups.length) {
@@ -263,6 +306,46 @@
       out.errors.push(...moved.errors);
     }
 
+    const requestedRenames = Array.isArray(message.renames)
+      ? message.renames.filter((item) => item && typeof item.id === 'string' &&
+        typeof item.oldName === 'string' && typeof item.name === 'string' && typeof item.url === 'string')
+      : [];
+    const RENAME_CHUNK_SIZE = 25;
+    for (let index = 0; index < requestedRenames.length; index += RENAME_CHUNK_SIZE) {
+      const batch = requestedRenames.slice(index, index + RENAME_CHUNK_SIZE);
+      const outcomes = await Promise.all(batch.map(async (item) => {
+        let current;
+        try {
+          const found = await chrome.bookmarks.get(item.id);
+          current = found && found[0];
+        } catch (error) {
+          return 'skipped';
+        }
+        if (!current || current.url !== item.url) return 'skipped';
+        if (current.title === item.name) return 'unchanged';
+        if (current.title !== item.oldName) return 'skipped';
+        try {
+          await chrome.bookmarks.update(item.id, { title: item.name });
+          return 'renamed';
+        } catch (error) {
+          return 'failed';
+        }
+      }));
+      for (const outcome of outcomes) {
+        if (outcome === 'renamed') out.renamed++;
+        else if (outcome === 'unchanged') out.renameUnchanged++;
+        else if (outcome === 'skipped') out.renameSkipped++;
+        else out.renameFailed++;
+      }
+      post(port, {
+        progress: {
+          kind: 'rename-write',
+          done: Math.min(index + batch.length, requestedRenames.length),
+          total: requestedRenames.length,
+        },
+      });
+    }
+
     out.merged = await NS.mergeDuplicateFolders(barId);
     out.cleaned = await NS.cleanEmptyFolders(barId);
     await chrome.storage.local.set({ lastOrganize: { time: Date.now(), ...out, errors: out.errors.slice(0, 20) } });
@@ -290,60 +373,6 @@
       lastManualDedupe: { time: Date.now(), removed: result.removed, groups: groups.length },
     });
     return result;
-  }
-
-  async function renameAllBookmarks(port) {
-    const bookmarks = await NS.getAllBookmarks();
-    if (!bookmarks.length) {
-      return { total: 0, renamed: 0, unchanged: 0, skipped: 0, failed: 0, errors: [] };
-    }
-
-    const settings = await readSettings();
-    const model = await resolveModel(settings);
-    const result = await NS.renameBookmarks(
-      bookmarks,
-      { model, disableThinking: model.disableThinking },
-      (done, total) => post(port, { progress: { kind: 'rename', done, total } })
-    );
-    const byId = new Map(result.suggestions.map((item) => [String(item.id), item.name]));
-    const counts = { renamed: 0, unchanged: 0, skipped: 0, failed: 0 };
-
-    post(port, { progress: { kind: 'rename-write', done: 0, total: bookmarks.length } });
-    const CHUNK_SIZE = 25;
-    for (let index = 0; index < bookmarks.length; index += CHUNK_SIZE) {
-      const batch = bookmarks.slice(index, index + CHUNK_SIZE);
-      const outcomes = await Promise.all(batch.map(async (bookmark) => {
-        const nextName = byId.get(String(bookmark.id));
-        if (nextName === undefined) return 'failed';
-        if (nextName === String(bookmark.name || '')) return 'unchanged';
-
-        let current;
-        try {
-          const found = await chrome.bookmarks.get(bookmark.id);
-          current = found && found[0];
-        } catch (error) {
-          return 'skipped';
-        }
-        if (!current || current.title !== bookmark.name || current.url !== bookmark.url) return 'skipped';
-
-        try {
-          await chrome.bookmarks.update(bookmark.id, { title: nextName });
-          return 'renamed';
-        } catch (error) {
-          return 'failed';
-        }
-      }));
-      for (const outcome of outcomes) counts[outcome]++;
-      post(port, {
-        progress: { kind: 'rename-write', done: Math.min(index + batch.length, bookmarks.length), total: bookmarks.length },
-      });
-    }
-
-    return {
-      total: bookmarks.length,
-      ...counts,
-      errors: (result.errors || []).slice(0, 3),
-    };
   }
 
   /* --------------------------------------------------------- the port API */
@@ -390,15 +419,13 @@
       case 'settings':
         return writeSettings(message.patch || {});
       case 'organize-preview':
-        return organizePreview(port, message.instruction);
+        return organizePreview(port, message.instruction, message.simplifyNames);
       case 'organize-apply':
-        return organizeApply(message);
+        return organizeApply(message, port);
       case 'dedupe-scan':
         return dedupeScan();
       case 'dedupe-apply':
         return dedupeApply(message);
-      case 'rename-all':
-        return renameAllBookmarks(port);
       default:
         throw new Error('未知操作');
     }

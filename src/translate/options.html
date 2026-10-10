@@ -163,6 +163,10 @@
           <div class="label"><b>已归类的书签</b></div>
           <input type="checkbox" id="bmMoveClassified" checked />
         </div>
+        <div class="bm-line">
+          <div class="label"><b>同时精简所有书签名称</b><span>覆盖所有文件夹，先预览再确认</span></div>
+          <input type="checkbox" id="bmOrganizeRename" checked />
+        </div>
         <div class="bm-instruction">
           <label class="bm-instruction-label" for="bmOrganizeInstruction">
             <b>本次整理要求（可选）</b>
@@ -185,6 +189,14 @@
             <span class="bm-meta" id="bmPreviewStats"></span>
           </div>
           <div class="bm-tree" id="bmTree"></div>
+          <div class="bm-custom-delete" id="bmRenameSection" hidden>
+            <div class="bm-preview-head bm-custom-delete-head">
+              <h4>精简名称预览</h4>
+              <span class="bm-meta" id="bmRenameStats"></span>
+            </div>
+            <div class="bm-list bm-rename-list" id="bmRenameList"></div>
+            <p class="bm-meta" id="bmRenameWarning" hidden></p>
+          </div>
           <div class="bm-custom-delete" id="bmCustomDeleteSection" hidden>
             <div class="bm-preview-head bm-custom-delete-head">
               <h4>按本次要求删除</h4>
@@ -197,21 +209,6 @@
             <button id="bmCancelOrganize" class="btn ghost">取消</button>
           </div>
         </div>
-      </div>
-
-      <div class="bm-block">
-        <div class="bm-block-head">
-          <span class="ico" data-icon="sparkles"></span>
-          <h3>精简书签名称</h3>
-        </div>
-        <div class="bm-line">
-          <div class="label">
-            <b>全部书签</b>
-            <span>覆盖所有文件夹；只改书签名称，不改文件夹名称</span>
-          </div>
-          <button id="bmRenameAll" class="btn primary">一键重命名</button>
-        </div>
-        <p class="bm-meta">使用上方选择的书签模型；模型只接收标题和不含查询参数、片段的链接。</p>
       </div>
 
       <div class="bm-block">

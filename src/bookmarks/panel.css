@@ -307,6 +307,10 @@
   white-space: nowrap;
 }
 
+.bm-rename-before { color: var(--faint); }
+.bm-rename-after { color: var(--text); font-weight: 500; }
+.bm-rename-arrow { flex: none; color: var(--faint); }
+
 .bm-fav {
   width: 13px;
   height: 13px;
