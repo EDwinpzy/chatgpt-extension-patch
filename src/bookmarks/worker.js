@@ -290,6 +290,60 @@
     return result;
   }
 
+  async function renameAllBookmarks(port) {
+    const bookmarks = await NS.getAllBookmarks();
+    if (!bookmarks.length) {
+      return { total: 0, renamed: 0, unchanged: 0, skipped: 0, failed: 0, errors: [] };
+    }
+
+    const settings = await readSettings();
+    const model = await resolveModel(settings);
+    const result = await NS.renameBookmarks(
+      bookmarks,
+      { model, disableThinking: model.disableThinking },
+      (done, total) => post(port, { progress: { kind: 'rename', done, total } })
+    );
+    const byId = new Map(result.suggestions.map((item) => [String(item.id), item.name]));
+    const counts = { renamed: 0, unchanged: 0, skipped: 0, failed: 0 };
+
+    post(port, { progress: { kind: 'rename-write', done: 0, total: bookmarks.length } });
+    const CHUNK_SIZE = 25;
+    for (let index = 0; index < bookmarks.length; index += CHUNK_SIZE) {
+      const batch = bookmarks.slice(index, index + CHUNK_SIZE);
+      const outcomes = await Promise.all(batch.map(async (bookmark) => {
+        const nextName = byId.get(String(bookmark.id));
+        if (nextName === undefined) return 'failed';
+        if (nextName === String(bookmark.name || '')) return 'unchanged';
+
+        let current;
+        try {
+          const found = await chrome.bookmarks.get(bookmark.id);
+          current = found && found[0];
+        } catch (error) {
+          return 'skipped';
+        }
+        if (!current || current.title !== bookmark.name || current.url !== bookmark.url) return 'skipped';
+
+        try {
+          await chrome.bookmarks.update(bookmark.id, { title: nextName });
+          return 'renamed';
+        } catch (error) {
+          return 'failed';
+        }
+      }));
+      for (const outcome of outcomes) counts[outcome]++;
+      post(port, {
+        progress: { kind: 'rename-write', done: Math.min(index + batch.length, bookmarks.length), total: bookmarks.length },
+      });
+    }
+
+    return {
+      total: bookmarks.length,
+      ...counts,
+      errors: (result.errors || []).slice(0, 3),
+    };
+  }
+
   /* --------------------------------------------------------- the port API */
 
   function post(port, message) {
@@ -340,6 +394,8 @@
         return dedupeScan();
       case 'dedupe-apply':
         return dedupeApply(message);
+      case 'rename-all':
+        return renameAllBookmarks(port);
       default:
         throw new Error('未知操作');
     }

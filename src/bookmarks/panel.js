@@ -61,6 +61,20 @@
 
   function paintProgress(progress) {
     if (!progress) return;
+    if (progress.kind === 'rename') {
+      showProgress(
+        '正在生成精简名称 ' + progress.done + ' / ' + progress.total + ' 批',
+        progress.total ? Math.round((progress.done / progress.total) * 100) : null
+      );
+      return;
+    }
+    if (progress.kind === 'rename-write') {
+      showProgress(
+        '正在更新名称 ' + progress.done + ' / ' + progress.total,
+        progress.total ? Math.round((progress.done / progress.total) * 100) : null
+      );
+      return;
+    }
     showProgress(progress.total
       ? '正在分类 ' + progress.done + ' / ' + progress.total + ' 批'
       : '正在处理…', progress.total ? Math.round((progress.done / progress.total) * 100) : null);
@@ -522,6 +536,28 @@
     }
   }
 
+  async function renameAllBookmarks() {
+    const button = $('bmRenameAll');
+    say('bmResult', '');
+    setBusy(button, true, '正在精简名称…');
+    showProgress('正在扫描全部书签…', null);
+    try {
+      const result = await ask('rename-all');
+      const parts = ['重命名 ' + result.renamed + ' 项'];
+      if (result.unchanged) parts.push('名称已合适 ' + result.unchanged + ' 项');
+      if (result.skipped) parts.push('书签有变化或已删除，跳过 ' + result.skipped + ' 项');
+      if (result.failed) parts.push('失败 ' + result.failed + ' 项');
+      const note = result.errors && result.errors.length ? '；模型提示：' + result.errors[0] : '';
+      say('bmResult', '重命名完成 · ' + parts.join(' · ') + note, Boolean(result.failed));
+      await refresh();
+    } catch (error) {
+      say('bmResult', '重命名失败：' + String(error.message || error), true);
+    } finally {
+      clearProgress();
+      setBusy(button, false);
+    }
+  }
+
   async function saveSettings(patch) {
     try {
       const settings = await ask('settings', { patch });
@@ -555,6 +591,7 @@
 
   click('bmDedupeScan', scanDuplicates);
   click('bmDedupeRemove', removeDuplicates);
+  click('bmRenameAll', renameAllBookmarks);
   click('bmDedupeCancel', () => {
     duplicates = null;
     const list = $('bmDedupeList');

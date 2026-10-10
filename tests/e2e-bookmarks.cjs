@@ -28,8 +28,7 @@ function check(label, ok, detail) {
   console.log((ok ? 'ok   ' : 'FAIL ') + label + (detail ? '  [' + detail + ']' : ''));
 }
 
-/* Stands in for the model: turns every "[ID:x] "name"" line in the prompt into
- * a category, so the whole flow runs without a real API. */
+/* Stands in for the model so the full flow runs without a real API. */
 function startGateway(seen) {
   const server = http.createServer((request, response) => {
     if (request.method !== 'POST') {
@@ -50,18 +49,32 @@ function startGateway(seen) {
         body = {};
       }
       const prompt = String(((body.messages || [])[1] || {}).content || '');
-      const items = [];
-      const instructionMatch = prompt.match(/自定义整理要求：[\s\S]*?\n([\s\S]*?)\n\n/);
-      const cutoffMatch = instructionMatch && instructionMatch[1].match(/(\d{4}-\d{2}-\d{2})/);
-      const line = /\[ID:([^\]]+)\] "([^"]*)"(?: \| 创建时间:([^|\n]+))?/g;
-      let match;
-      while ((match = line.exec(prompt))) {
-        const name = match[2];
-        if (cutoffMatch && Date.parse((match[3] || '').trim()) >= Date.parse(cutoffMatch[1] + 'T00:00:00Z')) {
-          items.push({ id: match[1], action: 'delete' });
-          continue;
+      let items = [];
+      if (prompt.includes('书签数据(JSON)：')) {
+        const marker = '书签数据(JSON)：';
+        const input = JSON.parse(prompt.slice(prompt.indexOf(marker) + marker.length).trim());
+        items = input.map((bookmark) => ({
+          id: bookmark.id,
+          name: bookmark.name === '收藏栏中的冗长测试书签名称'
+            ? '收藏栏测试'
+            : bookmark.name === '其他文件夹中的冗长书签名称'
+              ? '其他书签测试'
+              : bookmark.name,
+        }));
+        items = { items };
+      } else {
+        const instructionMatch = prompt.match(/自定义整理要求：[\s\S]*?\n([\s\S]*?)\n\n/);
+        const cutoffMatch = instructionMatch && instructionMatch[1].match(/(\d{4}-\d{2}-\d{2})/);
+        const line = /\[ID:([^\]]+)\] "([^"]*)"(?: \| 创建时间:([^|\n]+))?/g;
+        let match;
+        while ((match = line.exec(prompt))) {
+          const name = match[2];
+          if (cutoffMatch && Date.parse((match[3] || '').trim()) >= Date.parse(cutoffMatch[1] + 'T00:00:00Z')) {
+            items.push({ id: match[1], action: 'delete' });
+            continue;
+          }
+          items.push({ id: match[1], category: /股票|行情|A 股/.test(name) ? '财经' : 'AI' });
         }
-        items.push({ id: match[1], category: /股票|行情|A 股/.test(name) ? '财经' : 'AI' });
       }
       response.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       response.end(
@@ -137,7 +150,7 @@ async function main() {
       '--no-default-browser-check',
     ],
   });
-  const worker = await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
   if (!worker) throw new Error('the extension service worker never started');
 
   const extensionId = new URL(worker.url()).host;
@@ -342,6 +355,51 @@ async function main() {
   // that the pane renders a "bookmark -> folder" line at all.
   check('the pane shows the log line', /→\s*(AI|财经)/.test(lastAuto || ''), lastAuto);
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-pane.png'), fullPage: true });
+
+  /* ---- 一键精简所有书签名称 ---- */
+  const renameTargets = await worker.evaluate(async () => {
+    const roots = (await chrome.bookmarks.getTree())[0].children;
+    const bar = roots.find((child) => child.id === '1') || roots[0];
+    const other = roots.find((child) => child.id !== bar.id && child.children);
+    if (!other) throw new Error('the test profile has no non-bar bookmark folder');
+    const folder = await chrome.bookmarks.create({ parentId: bar.id, title: '重命名测试文件夹' });
+    const barBookmark = await chrome.bookmarks.create({
+      parentId: folder.id,
+      title: '收藏栏中的冗长测试书签名称',
+      url: 'https://rename-bar.test/guide?privateToken=do-not-send#private-fragment',
+    });
+    const otherBookmark = await chrome.bookmarks.create({
+      parentId: other.id,
+      title: '其他文件夹中的冗长书签名称',
+      url: 'https://rename-other.test/article?secret=keep-private#section',
+    });
+    return { folderId: folder.id, barId: barBookmark.id, otherId: otherBookmark.id };
+  });
+  const callsBeforeRename = seen.length;
+  await page.click('#bmRenameAll');
+  await page.waitForFunction(() => {
+    const node = document.getElementById('bmResult');
+    return node && !node.hidden && node.textContent.includes('重命名完成');
+  }, { timeout: 60000 });
+  const renameResult = await page.textContent('#bmResult');
+  const renamedTargets = await worker.evaluate(async (ids) => {
+    const [bar, other, folder] = await Promise.all([
+      chrome.bookmarks.get(ids.barId),
+      chrome.bookmarks.get(ids.otherId),
+      chrome.bookmarks.get(ids.folderId),
+    ]);
+    return { bar: bar[0].title, other: other[0].title, folder: folder[0].title };
+  }, renameTargets);
+  const renameRequests = seen.slice(callsBeforeRename);
+  check('one click renames bookmarks inside and outside the bar',
+    renamedTargets.bar === '收藏栏测试' && renamedTargets.other === '其他书签测试', JSON.stringify(renamedTargets));
+  check('renaming leaves folder names unchanged', renamedTargets.folder === '重命名测试文件夹', renamedTargets.folder);
+  check('the result reports successful renames', /重命名 \d+ 项/.test(renameResult || '') && !/失败/.test(renameResult || ''), renameResult);
+  check('the model request omits URL query strings and fragments',
+    renameRequests.length > 0 && renameRequests.every((raw) =>
+      !raw.includes('privateToken=do-not-send') && !raw.includes('secret=keep-private') && !raw.includes('private-fragment')),
+    renameRequests.length + ' request(s)');
+  await page.screenshot({ path: path.join(shotDir, 'bookmarks-renamed.png'), fullPage: true });
 
   /* ---- 自定义整理要求: date-based deletions stay in preview until confirmed ---- */
   // Keep newly planted bookmarks out of the background auto-classifier so the
