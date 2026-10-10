@@ -59,7 +59,9 @@ function startGateway(seen) {
             ? '收藏栏测试'
             : bookmark.name === '其他文件夹中的冗长书签名称'
               ? '其他书签测试'
-              : bookmark.name,
+              : bookmark.name === '自动精简测试的冗长名称'
+                ? '自动精简测试'
+                : bookmark.name,
         }));
         items = { items };
       } else {
@@ -201,6 +203,7 @@ async function main() {
   // Nothing that belongs to a state the user has not reached may be on screen.
   check('the cleanup row is there but disabled', (await page.isVisible('#bmDedupeRow')) && (await page.isDisabled('#bmDedupeRemove')));
   check('the frequency row starts hidden', (await page.isVisible('#bmIntervalRow')) === false);
+  check('automatic title cleanup starts off', (await page.getAttribute('#bmAutoRename', 'aria-checked')) === 'false');
   check('the preview starts hidden', (await page.isVisible('#bmPreview')) === false);
   await page.screenshot({ path: path.join(shotDir, 'bookmarks-pane-idle.png'), fullPage: true });
 
@@ -459,6 +462,41 @@ async function main() {
   countRemaining(afterCustomApply);
   check('confirmed custom deletions remove the selected bookmarks', remainingUrls === 0,
     remainingUrls + ' bookmark(s) remain');
+
+  /* ---- 新书签自动精简名称 ---- */
+  await page.click('#bmAutoRename');
+  await page.waitForFunction(() => document.getElementById('bmAutoRename').getAttribute('aria-checked') === 'true');
+  const automaticRenameId = await worker.evaluate(async () => {
+    const roots = (await chrome.bookmarks.getTree())[0].children;
+    const bar = roots.find((child) => child.id === '1') || roots[0];
+    const created = await chrome.bookmarks.create({
+      parentId: bar.id,
+      title: '自动精简测试的冗长名称',
+      url: 'https://auto-rename.test/page?secret=not-sent#fragment',
+    });
+    return created.id;
+  });
+  let automaticRenameTitle = '';
+  for (let attempt = 0; attempt < 20 && automaticRenameTitle !== '自动精简测试'; attempt++) {
+    await page.waitForTimeout(300);
+    automaticRenameTitle = await worker.evaluate(async (id) => {
+      const found = await chrome.bookmarks.get(id).catch(() => null);
+      return found && found[0] ? found[0].title : '';
+    }, automaticRenameId);
+  }
+  check('the switch automatically shortens a new bookmark', automaticRenameTitle === '自动精简测试', automaticRenameTitle);
+  const automaticRenameRecord = await worker.evaluate(() =>
+    chrome.storage.local.get('lastAutoRename').then((bag) => bag.lastAutoRename || null)
+  );
+  check('automatic title cleanup records its result',
+    Boolean(automaticRenameRecord) && automaticRenameRecord.state === 'done' &&
+      automaticRenameRecord.newName === '自动精简测试', JSON.stringify(automaticRenameRecord));
+  await page.click('[data-pane="models"]');
+  await page.click('[data-pane="bookmarks"]');
+  await page.waitForTimeout(500);
+  const automaticRenameLog = await page.textContent('#bmLastAutoRename');
+  check('the pane shows the automatic rename result', /自动精简名称.*自动精简测试/.test(automaticRenameLog || ''), automaticRenameLog);
+  await page.screenshot({ path: path.join(shotDir, 'bookmarks-auto-rename.png'), fullPage: true });
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   console.log('bookmark gateway calls: ' + seen.length);

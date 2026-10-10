@@ -249,6 +249,7 @@
     const move = $('bmMoveClassified');
     if (move) move.checked = settings.moveClassified !== false;
     setSwitch('bmAutoClassify', settings.autoClassify);
+    setSwitch('bmAutoRename', settings.autoRename);
     setSwitch('bmAutoDedupe', settings.autoDedupe);
     const interval = $('bmInterval');
     if (interval) interval.value = String(settings.autoDedupeInterval || 24);
@@ -278,6 +279,26 @@
       say('bmLastAutoClassify', '自动分类 ' + stampLabel(autoClassify.time) + ' · ' + autoClassify.name + ' → ' + where);
     } else {
       say('bmLastAutoClassify', '');
+    }
+
+    const autoRename = last.autoRename;
+    if (autoRename) {
+      const result = autoRename.state === 'done'
+        ? autoRename.name + ' → ' + autoRename.newName
+        : autoRename.state === 'unchanged'
+          ? '名称已经够简短'
+          : autoRename.state === 'changed'
+            ? '书签已被修改，跳过'
+            : autoRename.state === 'gone'
+              ? '书签已经不在'
+              : autoRename.state === 'error'
+                ? '出错：' + (autoRename.error || '')
+                : autoRename.state === 'no-name'
+                  ? '模型没有返回有效名称'
+                  : autoRename.state;
+      say('bmLastAutoRename', '自动精简名称 ' + stampLabel(autoRename.time) + ' · ' + result);
+    } else {
+      say('bmLastAutoRename', '');
     }
 
     const autoDedupe = last.autoDedupe;
@@ -604,7 +625,7 @@
   change('bmModel', () => saveSettings({ bookmarkModelId: $('bmModel').value }));
   change('bmInterval', () => saveSettings({ autoDedupeInterval: Number($('bmInterval').value) || 24 }));
 
-  for (const pair of [['bmAutoClassify', 'autoClassify'], ['bmAutoDedupe', 'autoDedupe']]) {
+  for (const pair of [['bmAutoClassify', 'autoClassify'], ['bmAutoRename', 'autoRename'], ['bmAutoDedupe', 'autoDedupe']]) {
     const id = pair[0];
     const key = pair[1];
     click(id, () => {

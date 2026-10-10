@@ -16,13 +16,15 @@
   const NS = self.CodexBookmarks;
   const SETTINGS_KEY = 'bookmarkSettings';
   const DEDUPE_ALARM = 'codex-bookmarks-dedupe';
-  const AUTO_CLASSIFY_DEBOUNCE_MS = 2000;
+  const AUTO_BOOKMARK_DEBOUNCE_MS = 2000;
   const PORT_NAME = 'codex-bookmarks';
 
   const DEFAULT_SETTINGS = {
     // New bookmarks are only filed when this is switched on: it changes
     // bookmarks on its own, so it is never on by default.
     autoClassify: false,
+    // New bookmark titles are only rewritten when this is switched on.
+    autoRename: false,
     // Same for the scheduled dedupe, and it deletes rather than moves.
     autoDedupe: false,
     autoDedupeInterval: 24,
@@ -360,7 +362,7 @@
       NS.getBookmarkBarBookmarks(),
       currentCategories(),
       readTranslateSettings(),
-      chrome.storage.local.get(['lastAutoClassify', 'lastAutoDedupe', 'lastOrganize', 'lastManualDedupe']),
+      chrome.storage.local.get(['lastAutoClassify', 'lastAutoRename', 'lastAutoDedupe', 'lastOrganize', 'lastManualDedupe']),
     ]);
     return {
       settings,
@@ -375,6 +377,7 @@
       last: {
         organize: stored.lastOrganize || null,
         autoClassify: stored.lastAutoClassify || null,
+        autoRename: stored.lastAutoRename || null,
         autoDedupe: stored.lastAutoDedupe || null,
       },
     };
@@ -417,7 +420,74 @@
 
   /* -------------------------------------------------------- automatic jobs */
 
-  const pendingClassify = new Map();
+  const pendingBookmarkCreate = new Map();
+
+  async function autoRenameBookmark(id, bookmark) {
+    const note = async (state, extra) => {
+      try {
+        await chrome.storage.local.set({
+          lastAutoRename: {
+            time: Date.now(),
+            name: bookmark.title || '',
+            url: bookmark.url || '',
+            state,
+            ...(extra || {}),
+          },
+        });
+      } catch (error) {
+        /* a log line failing is not worth reporting */
+      }
+    };
+
+    try {
+      const settings = await readSettings();
+      if (!settings.autoRename) return;
+
+      const found = await chrome.bookmarks.get(id).catch(() => null);
+      const before = found && found[0];
+      if (!before) {
+        await note('gone');
+        return;
+      }
+
+      const model = await resolveModel(settings);
+      const result = await NS.renameBookmarks(
+        [{ id, name: before.title || '', url: before.url || '' }],
+        { model, disableThinking: model.disableThinking }
+      );
+      const suggestion = (result.suggestions || []).find((item) => String(item.id) === String(id));
+      if (!suggestion) {
+        if (result.errors && result.errors.length) throw new Error(result.errors[0]);
+        await note('no-name');
+        return;
+      }
+
+      const latestSettings = await readSettings();
+      if (!latestSettings.autoRename) {
+        await note('off');
+        return;
+      }
+      const latest = await chrome.bookmarks.get(id).catch(() => null);
+      const current = latest && latest[0];
+      if (!current) {
+        await note('gone');
+        return;
+      }
+      if (current.title !== before.title || current.url !== before.url) {
+        await note('changed');
+        return;
+      }
+      if (suggestion.name === current.title) {
+        await note('unchanged', { newName: suggestion.name });
+        return;
+      }
+
+      await chrome.bookmarks.update(id, { title: suggestion.name });
+      await note('done', { newName: suggestion.name });
+    } catch (error) {
+      await note('error', { error: String((error && error.message) || error) });
+    }
+  }
 
   async function autoClassify(id, bookmark) {
     const note = async (state, extra) => {
@@ -475,20 +545,25 @@
   chrome.bookmarks.onCreated.addListener((id, bookmark) => {
     if (!bookmark || !bookmark.url) return;
     if (/^(chrome|edge|about|devtools|file|chrome-extension|edge-extension|moz-extension):/i.test(bookmark.url)) return;
-    const previous = pendingClassify.get(id);
+    const previous = pendingBookmarkCreate.get(id);
     if (previous) clearTimeout(previous);
     const timer = setTimeout(() => {
-      pendingClassify.delete(id);
-      autoClassify(id, bookmark).catch(() => {});
-    }, AUTO_CLASSIFY_DEBOUNCE_MS);
-    pendingClassify.set(id, timer);
+      pendingBookmarkCreate.delete(id);
+      autoRenameBookmark(id, bookmark)
+        .then(async () => {
+          const latest = await chrome.bookmarks.get(id).catch(() => null);
+          await autoClassify(id, latest && latest[0] ? latest[0] : bookmark);
+        })
+        .catch(() => {});
+    }, AUTO_BOOKMARK_DEBOUNCE_MS);
+    pendingBookmarkCreate.set(id, timer);
   });
 
   chrome.bookmarks.onRemoved.addListener((id) => {
-    const timer = pendingClassify.get(id);
+    const timer = pendingBookmarkCreate.get(id);
     if (!timer) return;
     clearTimeout(timer);
-    pendingClassify.delete(id);
+    pendingBookmarkCreate.delete(id);
   });
 
   /* ------------------------------------------------------ scheduled dedupe */
