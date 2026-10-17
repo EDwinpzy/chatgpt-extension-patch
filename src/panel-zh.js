@@ -1,5 +1,6 @@
 /*
- * Chinese localisation for the Codex side panel, plus one added menu entry.
+ * Chinese localisation for the Codex side panel, plus a fixed settings
+ * button pinned to the top-right corner of the panel.
  *
  * The extension ships English strings only: there is no Chinese catalogue
  * anywhere in the package, so translating means rewriting text in the DOM.
@@ -19,8 +20,6 @@
 
   if (window.__codexPanelZhLoaded) return;
   window.__codexPanelZhLoaded = true;
-
-  const MENU_MARK = 'data-codex-translate-menu';
 
   /* Only controls are eligible. Conversation bubbles never match. */
   const CONTROL_SELECTOR = [
@@ -198,78 +197,60 @@
     }
   }
 
-  /* ------------------------------------------------- added menu entry */
+  /* --------------------- 右上角常驻「设置」按钮 ----------------------
+   *
+   * 菜单注入试过三轮都被面板自身的渲染节奏打乱（菜单延迟挂载、可访问名称
+   * 既有属性又有隐藏文本、行菜单和头部菜单难以区分），改为不再依赖任何
+   * 菜单：直接在视口右上角固定一个半透明小按钮，点它打开补丁设置页。
+   * 普通侧边栏和 work 模式的原生页面（content script 注入）都能看到。
+   */
 
-  const MENU_ITEM_HINT = ['Chat actions', '聊天操作'];
-
-  function looksLikeMenu(element) {
-    if (!element || element.nodeType !== 1) return false;
-    if (element.closest('#' + 'codex-translate-bubble')) return false;
-    const role = element.getAttribute('role');
-    if (role === 'menu') return true;
-    const text = element.textContent || '';
-    if (text.length > 600) return false;
-    let hints = 0;
-    for (const hint of MENU_ITEM_HINT) if (text.includes(hint)) hints++;
-    return hints > 0;
-  }
-
-  function findMenuRoot() {
-    const candidates = document.querySelectorAll('[role="menu"], [data-radix-menu-content], [data-state="open"]');
-    for (const candidate of candidates) {
-      if (looksLikeMenu(candidate)) {
-        const items = candidate.querySelectorAll('[role="menuitem"], [role="menuitemradio"], button');
-        if (items.length >= 2) return candidate;
-      }
-    }
-    return null;
-  }
+  const GEAR_ID = 'codex-translate-gear';
 
   function openTranslationSettings() {
     chrome.runtime.sendMessage({ type: 'translate:open-options' }).catch(() => {});
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
 
-  function injectMenuEntry() {
-    const root = findMenuRoot();
-    if (!root) return false;
-    if (root.querySelector('[' + MENU_MARK + ']')) return true;
+  function mountSettingsButton() {
+    if (document.getElementById(GEAR_ID)) return;
+    const host = document.body || document.documentElement;
+    if (!host || !host.appendChild) return;
 
-    const items = Array.from(root.querySelectorAll('[role="menuitem"], [role="menuitemradio"], button'))
-      .filter((node) => !node.hasAttribute(MENU_MARK));
-    if (!items.length) return false;
+    const style = document.createElement('style');
+    style.id = GEAR_ID + '-style';
+    style.textContent = [
+      '#' + GEAR_ID + ' {',
+      '  position: fixed; top: 14px; right: 8px; z-index: 2147483647;',
+      '  width: 26px; height: 26px; padding: 0; margin: 0;',
+      '  display: flex; align-items: center; justify-content: center;',
+      '  border: 0; border-radius: 6px; cursor: pointer;',
+      '  background: transparent; color: inherit; opacity: .6;',
+      '  transition: opacity .12s ease;',
+      '}',
+      '#' + GEAR_ID + ':hover { opacity: 1; }',
+      '#' + GEAR_ID + ' svg { display: block; }',
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(style);
 
-    // Clone the first entry so the added row matches the top of the menu, then
-    // put it above that entry.
-    const template = items[0];
-    const entry = template.cloneNode(true);
-    entry.setAttribute(MENU_MARK, '1');
-    entry.removeAttribute('data-state');
-
-    const walker = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT, null);
-    let replaced = false;
-    let node;
-    while ((node = walker.nextNode())) {
-      if (!replaced && node.nodeValue && node.nodeValue.trim()) {
-        node.nodeValue = '设置';
-        replaced = true;
-      } else if (replaced) {
-        node.nodeValue = '';
-      }
-    }
-    if (!replaced) entry.textContent = '设置';
-    ['aria-label', 'title'].forEach((attr) => entry.setAttribute(attr, '设置'));
-    // Drop any icon in the cloned entry so only the label remains.
-    entry.querySelectorAll('svg, img').forEach((icon) => icon.remove());
-
-    entry.addEventListener('click', (event) => {
+    const button = document.createElement('button');
+    button.id = GEAR_ID;
+    button.type = 'button';
+    /* 竖排三点（kebab），三颗圆点在 16x16 视图里上下对称，天然居中。 */
+    button.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">' +
+      '<circle cx="8" cy="3" r="1.7" fill="currentColor"/>' +
+      '<circle cx="8" cy="8" r="1.7" fill="currentColor"/>' +
+      '<circle cx="8" cy="13" r="1.7" fill="currentColor"/>' +
+      '</svg>';
+    button.setAttribute('aria-label', '设置（翻译 / 摘要 / 书签）');
+    button.setAttribute('title', '设置（翻译 / 摘要 / 书签）');
+    button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
       openTranslationSettings();
-    }, true);
-
-    if (template.parentElement) template.parentElement.insertBefore(entry, template);
-    return true;
+    });
+    host.appendChild(button);
   }
 
   /* --------------------------------------------------------- scheduling */
@@ -279,7 +260,7 @@
     scheduled = false;
     try {
       translateControls(document);
-      injectMenuEntry();
+      mountSettingsButton();
     } catch (error) {
       /* a failed pass must never break the panel */
     }

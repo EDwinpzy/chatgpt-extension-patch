@@ -34,14 +34,26 @@
       "run_at": "document_end"
    }, {
       "all_frames": true,
+      "js": [ "codex-sidepanel/banner-hide.js", "codex-sidepanel/panel-zh.js", "codex-sidepanel/panel-summary.js" ],
+      "matches": [ "https://chatgpt.com/*" ],
+      "run_at": "document_idle"
+   }, {
+      "all_frames": true,
       "js": [ "content-scripts/codex-work-media-permission.js" ],
       "matches": [ "https://chatgpt.com/*" ],
       "run_at": "document_start",
       "world": "MAIN"
    } ],
    "content_security_policy": {
-      "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://ab.chatgpt.com https://chatgpt.com https://api.openai.com https://api.openai.org https://api.deepseek.com https://api.commandcode.ai https://opencode.ai https:; font-src 'self' https://cdn.openai.com;",
+      "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://ab.chatgpt.com https://chatgpt.com https://api.openai.com https://api.openai.org https://api.deepseek.com https://api.commandcode.ai https://opencode.ai http: https: ws: wss:; font-src 'self' https://cdn.openai.com;",
       "sandbox": "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src blob:; connect-src 'none';"
+   },
+   "declarative_net_request": {
+      "rule_resources": [ {
+         "enabled": true,
+         "id": "chatgpt-frame",
+         "path": "rules/chatgpt-frame.json"
+      } ]
    },
    "description": "Control your browser with ChatGPT.",
    "host_permissions": [ "\u003Call_urls>" ],

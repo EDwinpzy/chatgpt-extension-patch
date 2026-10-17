@@ -7,7 +7,7 @@
 # extension's own files and the generated translate/ folder all sit next to
 # src\, tools\, tests\ and mockups\. Point Edge at this folder directly.
 #
-# Three patches are applied to a fresh mirror of the store-installed extension:
+# Six patches are applied to a fresh mirror of the store-installed extension:
 #
 #   1. Banner hide  - a local script wired into codex-sidepanel/index.html that
 #                     hides the "You're out of Codex messages" upsell banner.
@@ -21,6 +21,20 @@
 #   4. Network      - the manifest CSP only allowed the host's own endpoints, so
 #                     every cloud translation request was refused. Its
 #                     connect-src list gains the translation providers.
+#   5. Frame        - the work side panel loads https://chatgpt.com/ in an
+#                     iframe. chatgpt.com sends X-Frame-Options: SAMEORIGIN and
+#                     a CSP frame-ancestors list that only names the two store
+#                     extension ids, so a patched build shows the browser's
+#                     "refused to connect" page inside the panel. A static
+#                     declarativeNetRequest rule set strips those two response
+#                     headers for sub_frame loads of chatgpt.com and
+#                     auth.openai.com. Nothing else is touched: extension_pages
+#                     CSP, permissions and every other patch stay as they are.
+#   6. Panel site   - the same iframe means the panel features wired into
+#                     index.html (banner hide, Chinese localisation, summary)
+#                     never run on the embedded page. Those three scripts are
+#                     registered as an all-frames content script for
+#                     chatgpt.com, so the embedded site keeps them too.
 #
 # src\, tools\, tests\, mockups\ and translation-plan.md are protected: they are
 # excluded from the mirror and verified to exist before it runs.
@@ -43,20 +57,24 @@ $zhSource      = Join-Path $srcRoot 'panel-zh.js'
 $summonSource  = Join-Path $srcRoot 'panel-summary.js'
 $translateSrc  = Join-Path $srcRoot 'translate'
 $bookmarksSrc  = Join-Path $srcRoot 'bookmarks'
+$frameRuleSrc  = Join-Path $srcRoot 'frame\chatgpt-frame.json'
 $extensionRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\Default\Extensions'
 $marker        = '<!-- codex-banner-hide -->'
 $scriptTags    = @('<script src="./banner-hide.js"></script>', '<script src="./panel-zh.js"></script>', '<script src="./panel-summary.js"></script>')
 $scriptTag     = $scriptTags[0]
 
-# Appended to the manifest connect-src list. The three named hosts cover the
-# built-in cloud presets; "https:" leaves custom OpenAI-compatible endpoints
-# usable, and 127.0.0.1 / localhost are already listed by the host extension.
+# Appended to the manifest connect-src list. Scheme sources cover every host the
+# user may point a model at, including local servers on a LAN address or any
+# custom OpenAI-compatible endpoint; the named hosts keep the built-in presets
+# readable in the policy.
 $cspAnchor     = 'https://api.openai.org;'
-$cspExtra      = ' https://api.deepseek.com https://api.commandcode.ai https://opencode.ai https:'
+$cspExtra      = ' https://api.deepseek.com https://api.commandcode.ai https://opencode.ai http: https: ws: wss:'
 $cspMarker     = 'https://api.deepseek.com'
 
-# Never mirrored, never deleted.
-$protectedDirs  = @('src', 'tools', 'tests', 'mockups', 'extension', 'translate', 'bookmarks')
+# Never mirrored, never deleted. rules\ and .workbuddy-ai\ are generated or
+# local-only; without them here the mirror pass would wipe the rule set and the
+# workspace notes.
+$protectedDirs  = @('src', 'tools', 'tests', 'mockups', 'extension', 'translate', 'bookmarks', 'rules', '.workbuddy-ai')
 $protectedFiles = @('translation-plan.md')
 
 function Get-LatestSourceDir {
@@ -102,6 +120,9 @@ function Show-Status {
         Write-Output ('options page               : ' + $manifest.options_ui.page)
         $policy = [string]$manifest.content_security_policy.extension_pages
         Write-Output ('cloud hosts allowed        : ' + $policy.Contains($cspMarker))
+        $dnr = $manifest.declarative_net_request.rule_resources
+        Write-Output ('iframe rule set            : ' + [bool]$dnr)
+        Write-Output ('iframe rules present       : ' + (Test-Path -LiteralPath (Join-Path $projectRoot 'rules\chatgpt-frame.json')))
         Write-Output ('translate folder present   : ' + (Test-Path -LiteralPath (Join-Path $projectRoot 'translate')))
         $panelHtml = Join-Path $projectRoot 'codex-sidepanel\index.html'
         $wired = 0
@@ -126,7 +147,7 @@ function Assert-ProtectedPaths {
     foreach ($name in $protectedDirs) {
         $path = Join-Path $projectRoot $name
         # Generated folders: created by the patches below, not required to exist.
-        if ($name -eq 'extension' -or $name -eq 'translate' -or $name -eq 'bookmarks') { continue }
+        if ($name -eq 'extension' -or $name -eq 'translate' -or $name -eq 'bookmarks' -or $name -eq 'rules' -or $name -eq '.workbuddy-ai') { continue }
         if (-not (Test-Path -LiteralPath $path)) {
             throw ('protected path is missing, refusing to mirror: ' + $path)
         }
@@ -294,6 +315,74 @@ function Apply-NetworkPatch {
     return 'network: connect-src widened'
 }
 
+function Apply-FramePatch {
+    $rulesDir = Join-Path $projectRoot 'rules'
+    if (-not (Test-Path -LiteralPath $rulesDir)) {
+        New-Item -ItemType Directory -Path $rulesDir | Out-Null
+    }
+    Copy-Item -LiteralPath $frameRuleSrc -Destination (Join-Path $rulesDir 'chatgpt-frame.json') -Force
+
+    $manifestPath = Join-Path $projectRoot 'manifest.json'
+    $raw = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+    if ($raw.Contains('"declarative_net_request"')) { return 'frame: already wired' }
+    $anchor = '"host_permissions"'
+    if (-not $raw.Contains($anchor)) {
+        throw 'host_permissions anchor not found in manifest.json; refusing to guess'
+    }
+    $block = @(
+        '   "declarative_net_request": {',
+        '      "rule_resources": [ {',
+        '         "enabled": true,',
+        '         "id": "chatgpt-frame",',
+        '         "path": "rules/chatgpt-frame.json"',
+        '      } ]',
+        '   },',
+        '   "host_permissions"'
+    ) -join [Environment]::NewLine
+    $raw = $raw.Replace($anchor, $block)
+    $parsed = $raw | ConvertFrom-Json
+    if (-not $parsed.declarative_net_request.rule_resources) {
+        throw 'frame patch did not land in the manifest'
+    }
+    Write-Utf8NoBom -Path $manifestPath -Text $raw
+    return 'frame: iframe headers stripped'
+}
+
+function Apply-PanelSitePatch {
+    # The work side panel embeds the live chatgpt.com page in an iframe, so the
+    # localisation / summary / banner-hide scripts wired into index.html never
+    # run there. Register the same three files as an all-frames content script
+    # for chatgpt.com so the embedded page keeps every panel feature.
+    $manifestPath = Join-Path $projectRoot 'manifest.json'
+    $raw = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+    if ($raw.Contains('"codex-sidepanel/panel-zh.js"')) { return 'panel-site: already wired' }
+
+    $pattern = '\},\s*\{\s*"all_frames":\s*true,\s*"js":\s*\[\s*"content-scripts/codex-work-media-permission\.js"'
+    if (-not [regex]::IsMatch($raw, $pattern)) {
+        throw 'media-permission content script anchor not found in manifest.json; refusing to guess'
+    }
+    $nl = "`r`n"
+    if (-not $raw.Contains($nl)) { $nl = "`n" }
+    $entry = @(
+        '}, {',
+        '      "all_frames": true,',
+        '      "js": [ "codex-sidepanel/banner-hide.js", "codex-sidepanel/panel-zh.js", "codex-sidepanel/panel-summary.js" ],',
+        '      "matches": [ "https://chatgpt.com/*" ],',
+        '      "run_at": "document_idle"',
+        '   }, {',
+        '      "all_frames": true,',
+        '      "js": [ "content-scripts/codex-work-media-permission.js"'
+    ) -join $nl
+    $raw = [regex]::Replace($raw, $pattern, $entry)
+    $parsed = $raw | ConvertFrom-Json
+    $hit = @($parsed.content_scripts | Where-Object { $_.js -contains 'codex-sidepanel/panel-zh.js' })
+    if ($hit.Count -ne 1) {
+        throw 'panel-site patch did not land in the manifest'
+    }
+    Write-Utf8NoBom -Path $manifestPath -Text $raw
+    return 'panel-site: panel features on chatgpt.com'
+}
+
 if ($Status) {
     Show-Status
     return
@@ -314,7 +403,8 @@ foreach ($required in @(
     (Join-Path $bookmarksSrc 'panel.css'),
     (Join-Path $bookmarksSrc 'lib\classifier.js'),
     (Join-Path $bookmarksSrc 'lib\deduplicator.js'),
-    (Join-Path $bookmarksSrc 'lib\bookmark-utils.js')
+    (Join-Path $bookmarksSrc 'lib\bookmark-utils.js'),
+    $frameRuleSrc
 )) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw ('Missing ' + $required)
@@ -332,6 +422,8 @@ Write-Output ('  ' + (Apply-PanelPatch))
 Write-Output ('  ' + (Apply-TranslatePatch))
 Write-Output ('  ' + (Apply-BookmarksPatch))
 Write-Output ('  ' + (Apply-NetworkPatch))
+Write-Output ('  ' + (Apply-FramePatch))
+Write-Output ('  ' + (Apply-PanelSitePatch))
 
 $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 Write-Output ('version : ' + $manifest.version)
