@@ -805,13 +805,26 @@ async function callClassifyModel(prompt, model, options) {
     }
     clearTimeout(timer);
 
-    const text = await response.text();
+    let text = await response.text();
     if (!response.ok) {
-      const error = new Error('模型返回 ' + response.status + '：' + text.slice(0, 200));
-      if (response.status === 400 || response.status === 404 || response.status === 415 || response.status === 422) {
-        error.tryNextShape = true;
+      if (typeof isCommandCodeBase === 'function' && isCommandCodeBase(base) &&
+          typeof isCommandCodeUpgradeRequired === 'function' && isCommandCodeUpgradeRequired(response.status, text)) {
+        const generated = await callCommandCodeGenerate(
+          [
+            { role: 'system', content: '只返回 JSON。' },
+            { role: 'user', content: prompt },
+          ],
+          { baseUrl: base, apiKey: model.apiKey, model: model.model, disableThinking: false, maxTokens: CLASSIFY_MAX_TOKENS, timeoutMs: CLASSIFY_TIMEOUT_MS },
+          CLASSIFY_MAX_TOKENS
+        );
+        text = JSON.stringify({ choices: [{ message: { content: generated } }] });
+      } else {
+        const error = new Error('模型返回 ' + response.status + '：' + text.slice(0, 200));
+        if (response.status === 400 || response.status === 404 || response.status === 415 || response.status === 422) {
+          error.tryNextShape = true;
+        }
+        throw error;
       }
-      throw error;
     }
 
     let data;

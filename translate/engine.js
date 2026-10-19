@@ -656,6 +656,73 @@ function gatewayReason(body) {
   return '';
 }
 
+/* ------------------------------------------------------------------ Command Code Go-plan fallback (top-level, shared with bookmarks classifier) */
+function isCommandCodeBase(base) {
+  try { return /commandcode\.ai$/i.test(new URL(base).hostname); }
+  catch (error) { return /commandcode\.ai/i.test(String(base || '')); }
+}
+function isCommandCodeUpgradeRequired(status, bodyText) {
+  if (status !== 403) return false;
+  const raw = String(bodyText || '').trim();
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch (error) { parsed = null; }
+  const errObj = (parsed && parsed.error && typeof parsed.error === 'object') ? parsed.error : (parsed || {});
+  if (errObj && errObj.code === 'upgrade_required') return true;
+  if (/upgrade_required/.test(raw)) return true;
+  const message = String(errObj && errObj.message ? errObj.message : '');
+  if (/doesn't include API access/i.test(message)) return true;
+  if (/upgrade to/i.test(message)) return true;
+  return false;
+}
+async function callCommandCodeGenerate(messages, options, maxTokens) {
+  const base = String(options.baseUrl || '').replace(/\/+$/, '');
+  if (!base) throw new Error('没有配置模型地址');
+  let origin = '';
+  try { origin = new URL(base).origin; } catch (error) { origin = base; }
+  const url = origin + '/alpha/generate';
+  const systemParts = [];
+  const wire = [];
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const content = typeof message.content === 'string' ? message.content : String(message.content ?? '');
+    if (message.role === 'system' || message.role === 'developer') { systemParts.push(content); continue; }
+    if (message.role === 'assistant') wire.push({ role: 'assistant', content: [{ type: 'text', text: content }] });
+    else wire.push({ role: 'user', content: [{ type: 'text', text: content }] });
+  }
+  const system = systemParts.filter((part) => String(part).trim()).join('\n\n') || 'You are a helpful assistant.';
+  const envelope = { config: { workingDir: '', date: new Date().toISOString().slice(0, 10), environment: 'production', structure: [], isGitRepo: false, currentBranch: '', mainBranch: '', gitStatus: '', recentCommits: [] }, memory: '', taste: null, skills: null, permissionMode: 'standard', params: { model: String(options.model || ''), system, messages: wire, tools: [], max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : (Number(options.maxTokens) > 0 ? Number(options.maxTokens) : 1024), stream: true, temperature: 0.1 } };
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + String(options.apiKey || ''), 'x-cli-environment': 'production', 'x-command-code-version': '1.14.1', 'x-session-id': (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') ? crypto.randomUUID() : String(Math.random()) };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs || REQUEST_TIMEOUT_MS);
+  let response = null;
+  try { response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(envelope), signal: controller.signal }); }
+  catch (error) { clearTimeout(timer); if (error && error.name === 'AbortError') throw new Error('请求超时（' + Math.round((options.timeoutMs || REQUEST_TIMEOUT_MS) / 1000) + ' 秒）'); throw new Error('无法连接 Command Code 回退接口：' + (error && error.message ? error.message : error)); }
+  clearTimeout(timer);
+  if (!response.ok) { const raw = await response.text().catch(() => ''); let reason = ''; try { const data = JSON.parse(raw); reason = (data && data.error && data.error.message) || (data && data.message) || ''; } catch (error) { reason = String(raw).slice(0, 200); } throw new Error('Command Code 回退接口返回 ' + response.status + (reason ? '：' + reason : '（没有给出原因）')); }
+  const reader = response.body && typeof response.body.getReader === 'function' ? response.body.getReader() : null;
+  if (!reader) { const raw = await response.text().catch(() => ''); try { const data = JSON.parse(raw); const content = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || ''; if (content) return String(content).trim(); } catch (error) { } throw new Error('Command Code 回退接口没有返回可读的流'); }
+  const decoder = new TextDecoder();
+  let buffer = '', collected = '', streamError = null;
+  try {
+    while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); let newline = buffer.indexOf('\n'); while (newline !== -1) { const line = buffer.slice(0, newline).trim(); buffer = buffer.slice(newline + 1); if (line) { const payload = line.startsWith('data:') ? line.slice(5).trim() : line; if (payload && payload !== '[DONE]') { try { const ev = JSON.parse(payload); if (ev && ev.type === 'text-delta') collected += String(ev.text ?? ''); else if (ev && ev.type === 'text') collected += String(ev.text ?? ev.content ?? ''); else if (ev && ev.type === 'error') streamError = ev.error && ev.error.message ? ev.error.message : (ev.message || 'Command Code stream error'); } catch (error) { } } } newline = buffer.indexOf('\n'); } }
+    const tail = buffer.trim();
+    if (tail) {
+      const payload = tail.startsWith('data:') ? tail.slice(5).trim() : tail;
+      if (payload && payload !== '[DONE]') {
+        try {
+          const ev = JSON.parse(payload);
+          if (ev && ev.type === 'text-delta') collected += String(ev.text ?? '');
+          else if (ev && ev.type === 'text') collected += String(ev.text ?? ev.content ?? '');
+          else if (ev && ev.type === 'error') streamError = (ev.error && ev.error.message) ? ev.error.message : (ev.message || 'Command Code stream error');
+        } catch (error) { /* ignore */ }
+      }
+    }
+  } finally { try { reader.releaseLock(); } catch (error) { } }
+  if (streamError) throw new Error(streamError);
+  const content = collected.trim();
+  if (!content) throw new Error('Command Code 回退接口没有返回内容');
+  return content;
+}
+
 async function callModel(messages, options) {
   const base = String(options.baseUrl || '').replace(/\/+$/, '');
   if (!base) throw new Error('没有配置模型地址');
@@ -715,6 +782,10 @@ async function callModel(messages, options) {
        * same request without them works - that gets its own retry. Nothing else
        * is retried: the route is the configured one and stays that way.
        */
+      if (isCommandCodeBase(base) && isCommandCodeUpgradeRequired(response.status, text)) {
+        console.info('[translate] Command Code Provider API refused (Go plan); falling back to /alpha/generate');
+        return await callCommandCodeGenerate(messages, options, maxTokens);
+      }
       const flagsRejected = disableThinking && (response.status === 400 || response.status === 404 || response.status === 422);
       const reason = gatewayReason(text);
       // The body is still worth keeping, just not in the caller's face.
