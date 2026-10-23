@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "网页翻译助手",
+  "description": "划词、整页和视频字幕翻译。",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "action": {
+    "default_title": "网页翻译设置"
+  },
+  "background": {
+    "service_worker": "background-loader.js"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "exclude_matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js",
+        "subtitle.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

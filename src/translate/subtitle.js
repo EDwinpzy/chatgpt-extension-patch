@@ -7,6 +7,14 @@
  * text is never rewritten, so a player can re-render its captions as often as
  * it likes without fighting us.
  *
+ * Captions arrive one cue at a time, which is not how a sentence reads. The
+ * cues are gathered into one spoken passage - closed at a sentence end, at a
+ * pause in the captions, or when the passage grows long - and that passage is
+ * translated in a single request, with the lines already sent travelling along
+ * as context. The bar holds the passage as one paragraph, so what is read is a
+ * complete thought instead of a chain of half sentences, and one request per
+ * passage instead of one per cue is what lets the bar keep up with the video.
+ *
  * Two sources are read:
  *   - caption elements the player renders into the DOM (YouTube, bilibili,
  *     Video.js, Plyr, JW Player, Shaka, Netflix, ...)
@@ -19,10 +27,25 @@
   const HOST_ID = 'codex-subtitle';
   const HIDDEN_ATTR = 'data-codex-subtitle-hidden';
   const SETTINGS_KEY = 'translateSettings';
-  const POLL_MS = 320;
-  // A caption blinking away between two lines must not clear the bar.
+  /* Fast enough that a new cue is picked up while it is still being spoken. */
+  const POLL_MS = 240;
+  /* A caption blinking away between two lines must not clear the bar. */
   const EMPTY_GRACE_MS = 1200;
+  /* Past this, whatever is still in flight is dropped: the video moved on. */
+  const EMPTY_MAX_MS = 4000;
   const MEMO_MAX = 400;
+
+  /*
+   * Where a passage ends. A sentence end closes it as soon as it is worth a
+   * call; a long stretch without punctuation is closed at CHUNK_MAX so the bar
+   * never falls a whole paragraph behind; a pause in the captions closes it
+   * too, which is what makes the last line of a scene appear.
+   */
+  const CHUNK_MIN = 8;
+  const CHUNK_MAX = 110;
+  const CHUNK_IDLE_MS = 650;
+  /* Source text sent along so the next passage keeps names and pronouns. */
+  const CONTEXT_CHARS = 200;
 
   const DOM_CAPTIONS = [
     '.ytp-caption-window-container',
@@ -47,11 +70,21 @@
   let shadow = null;
   let bar = null;
   let lastSource = '';
-  let token = 0;
   let emptySince = 0;
-  let hiddenNode = null;
   let hideStyle = null;
   const memo = new Map();
+
+  /* The passage being collected, and the one already on screen. */
+  let pending = '';
+  let lastGrowth = 0;
+  let context = '';
+  let paragraph = '';
+  let paragraphGen = 0;
+  const jobs = [];
+  let draining = false;
+
+  /* Every player-painted element currently hidden by us. */
+  let hiddenNodes = new Set();
 
   /* ------------------------------------------------------------- settings */
 
@@ -98,6 +131,24 @@
     return genericCaptionBox();
   }
 
+  /*
+   * Every caption element on the picture, not just one: players split a line
+   * over several boxes ("speaker one" / "speaker two"), and hiding only the
+   * last match is exactly how the original line stays visible next to ours.
+   */
+  function captionNodes() {
+    const video = findVideo();
+    const videoRect = video ? video.getBoundingClientRect() : null;
+    const nodes = [];
+    for (const node of document.querySelectorAll(DOM_CAPTIONS)) {
+      const hit = captionCandidate(node);
+      if (!hit) continue;
+      if (videoRect && !overlapsVideo(hit.rect, videoRect)) continue;
+      nodes.push(node);
+    }
+    return nodes.length ? nodes : genericCaptionNodes();
+  }
+
   /* Shared shape check: short visible text, real box, on screen. */
   function captionCandidate(node) {
     if (!node || node.id === HOST_ID || node.closest('#' + HOST_ID)) return null;
@@ -112,20 +163,31 @@
   }
 
   /*
+   * Whether a candidate is drawn on the picture rather than in a transcript
+   * list under it. A caption slightly below the frame is still the player's.
+   */
+  function overlapsVideo(rect, videoRect) {
+    if (!videoRect) return true;
+    if (rect.bottom < videoRect.top) return false;
+    if (rect.top > videoRect.bottom + 120) return false;
+    return true;
+  }
+
+  /*
    * Unknown players exist, so when no known selector matches, the video's own
    * container is scanned for an element that is named like a caption track and
    * sits over the picture. Scanning only that container keeps it cheap, and
    * still covers the custom players.
    */
-  function genericCaptionBox() {
+  function genericCaptionNodes() {
     const video = findVideo();
-    if (!video) return null;
+    if (!video) return [];
     const scope = video.parentElement && video.parentElement.parentElement
       ? video.parentElement.parentElement
       : video.parentElement;
-    if (!scope) return null;
+    if (!scope) return [];
     const videoRect = video.getBoundingClientRect();
-    let found = null;
+    const found = [];
     const nodes = scope.querySelectorAll('div, span, p');
     const limit = Math.min(nodes.length, 500);
     for (let index = 0; index < limit; index++) {
@@ -137,9 +199,18 @@
       // player must not be mistaken for the line being spoken.
       if (hit.rect.bottom < videoRect.top + videoRect.height * 0.4) continue;
       if (hit.rect.top > videoRect.bottom + 40) continue;
-      found = hit;
+      found.push(node);
     }
     return found;
+  }
+
+  function genericCaptionBox() {
+    const nodes = genericCaptionNodes();
+    for (let index = nodes.length - 1; index >= 0; index--) {
+      const hit = captionCandidate(nodes[index]);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   function cueText() {
@@ -181,42 +252,56 @@
   }
 
   /*
-   * Two things are hidden while a translated line is on screen: the caption box
+   * Two things are hidden while our text is on screen: every caption element
    * the player painted, and whatever the browser paints itself for a native
-   * text track (the ::cue rule). Both go back the moment our line goes away.
+   * text track (the ::cue rule - opacity and visibility together, because a
+   * browser that ignores one still honours the other). Both go back the moment
+   * our line goes away.
    */
   function paintHideStyle(active) {
     ensureHideStyle();
     const rules = ['[' + HIDDEN_ATTR + '] { visibility: hidden !important; }'];
-    if (active) rules.push('video::cue { visibility: hidden !important; }');
+    if (active) rules.push('video::cue, video::cue-region { visibility: hidden !important; opacity: 0 !important; }');
     const next = rules.join('\n');
     if (hideStyle.textContent !== next) hideStyle.textContent = next;
   }
 
-  function hideOriginal(node) {
+  /*
+   * Re-run on every poll while our bar is up: players rebuild caption elements
+   * per cue, so the set from the last frame is not the set on this one.
+   */
+  function hideCaptions() {
     paintHideStyle(true);
-    if (!node || node === hiddenNode) return;
-    restoreOriginalNode();
-    try {
-      node.setAttribute(HIDDEN_ATTR, '1');
-      hiddenNode = node;
-    } catch (error) {
-      hiddenNode = null;
+    const keep = new Set();
+    for (const node of captionNodes()) {
+      if (!node || node.id === HOST_ID || node.closest('#' + HOST_ID)) continue;
+      try {
+        node.setAttribute(HIDDEN_ATTR, '1');
+        keep.add(node);
+      } catch (error) {
+        /* a detached node needs no marking */
+      }
     }
-  }
-
-  function restoreOriginalNode() {
-    if (!hiddenNode) return;
-    try {
-      hiddenNode.removeAttribute(HIDDEN_ATTR);
-    } catch (error) {
-      /* the player already replaced the node */
+    for (const node of hiddenNodes) {
+      if (keep.has(node)) continue;
+      try {
+        node.removeAttribute(HIDDEN_ATTR);
+      } catch (error) {
+        /* the player already replaced the node */
+      }
     }
-    hiddenNode = null;
+    hiddenNodes = keep;
   }
 
   function restoreOriginal() {
-    restoreOriginalNode();
+    for (const node of hiddenNodes) {
+      try {
+        node.removeAttribute(HIDDEN_ATTR);
+      } catch (error) {
+        /* the player already replaced the node */
+      }
+    }
+    hiddenNodes = new Set();
     if (hideStyle) paintHideStyle(false);
   }
 
@@ -229,14 +314,19 @@
     return Math.max(6, Math.min(140, Math.floor(width / fontSize()) * maxLines()));
   }
 
-  async function translate(text) {
+  /*
+   * One passage, one request. The context is only a hint for the model - the
+   * answer is for the passage in hand - so it is not part of the cache key: a
+   * phrase that recurs is served from memory instead of costing a round trip.
+   */
+  async function translate(text, contextText) {
     if (memo.has(text)) return memo.get(text);
     const reply = await chrome.runtime
       .sendMessage({
         type: 'translate:batch',
         texts: [text],
         purpose: 'subtitle',
-        budgets: [charBudget()],
+        context: contextText || '',
       })
       .catch(() => null);
     const out = reply && reply.ok && Array.isArray(reply.translations) ? clean(reply.translations[0]) : '';
@@ -245,6 +335,93 @@
       if (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value);
     }
     return out;
+  }
+
+  /* ------------------------------------------------------------- passages */
+
+  /*
+   * Captions do not always replace their text; some players grow the same line
+   * or roll the previous one forward. Only what is new is appended, otherwise
+   * a rolling caption would be translated two and three times over.
+   */
+  function deltaOf(previous, next) {
+    if (!previous) return next;
+    if (next === previous) return '';
+    if (next.startsWith(previous)) return next.slice(previous.length).trim();
+    if (previous.startsWith(next)) return '';
+    const max = Math.min(previous.length, next.length, 90);
+    for (let length = max; length >= 6; length--) {
+      if (previous.slice(-length) === next.slice(0, length)) return next.slice(length).trim();
+    }
+    return next;
+  }
+
+  function endsSentence(text) {
+    return /[.!?…。！？]["'”’)\]】」』]?\s*$/.test(text.trim());
+  }
+
+  function joinPassage(previous, next) {
+    if (!previous) return next;
+    const tail = previous.slice(-1);
+    const gap = /[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/.test(tail) ? '' : ' ';
+    return previous + gap + next;
+  }
+
+  /* Keeps the last full sentences that fit the bar, never half a sentence. */
+  function trimPassage(text) {
+    const budget = charBudget();
+    if (text.length <= budget) return text;
+    let cut = text.length - budget;
+    const boundary = text.slice(cut).search(/[。！？；.!?…]\s*/);
+    if (boundary >= 0 && boundary < Math.max(8, budget * 0.5)) cut += boundary + 1;
+    return text.slice(cut).trim();
+  }
+
+  /*
+   * The passage is closed here. Its request goes out immediately - the model
+   * waits for nothing - and the answers are attached to the bar in the order
+   * they were asked for, even when a later one comes back first.
+   */
+  function flush() {
+    const chunk = pending.trim();
+    pending = '';
+    if (!chunk || chunk.length < 2) return;
+    const sentContext = context.slice(-CONTEXT_CHARS);
+    context = (context ? context + ' ' : '') + chunk;
+    if (context.length > CONTEXT_CHARS) context = context.slice(-CONTEXT_CHARS);
+    jobs.push({
+      gen: paragraphGen,
+      job: translate(chunk, sentContext).catch(() => ''),
+    });
+    drainJobs();
+  }
+
+  async function drainJobs() {
+    if (draining) return;
+    draining = true;
+    try {
+      while (jobs.length) {
+        const entry = jobs.shift();
+        const out = await entry.job;
+        // A passage from before the video moved on is not worth showing.
+        if (entry.gen !== paragraphGen || !out) continue;
+        paragraph = trimPassage(joinPassage(paragraph, out));
+        show(paragraph);
+      }
+    } finally {
+      draining = false;
+    }
+  }
+
+  function resetPassage() {
+    hide();
+    lastSource = '';
+    pending = '';
+    lastGrowth = 0;
+    context = '';
+    paragraph = '';
+    jobs.length = 0;
+    paragraphGen++;
   }
 
   /* --------------------------------------------------------------- overlay */
@@ -310,7 +487,8 @@
     bar.style.top = Math.round(top) + 'px';
   }
 
-  function show(text, node) {
+  function show(text) {
+    if (!text) return;
     ensureOverlay();
     bar.style.fontSize = fontSize() + 'px';
     bar.style.webkitLineClamp = String(maxLines());
@@ -318,8 +496,7 @@
     bar.hidden = false;
     // Hide whatever the player is showing right now, not only the element the
     // text came from: several players build a fresh one for every cue.
-    const current = captionBox();
-    hideOriginal((current && current.node) || node);
+    hideCaptions();
     place();
   }
 
@@ -344,6 +521,7 @@
     if (!enabled()) {
       destroy();
       lastSource = '';
+      resetPassage();
       return;
     }
     if (bar && !bar.hidden) {
@@ -359,40 +537,64 @@
     window.setTimeout(loop, POLL_MS);
     if (document.hidden || !enabled()) return;
 
+    const now = Date.now();
     const source = currentSubtitle();
     const text = source.text;
+
     if (!text) {
-      if (!emptySince) emptySince = Date.now();
-      if (Date.now() - emptySince > EMPTY_GRACE_MS) {
-        hide();
-        lastSource = '';
+      if (!emptySince) emptySince = now;
+      // The tail of the sentence that was being spoken is still worth showing.
+      if (pending && now - lastGrowth > CHUNK_IDLE_MS) flush();
+      if (now - emptySince > EMPTY_GRACE_MS && (jobs.length === 0 || now - emptySince > EMPTY_MAX_MS)) {
+        resetPassage();
       }
       return;
     }
     emptySince = 0;
 
     // Our line is the caption now, so whatever the player paints stays hidden.
-    if (bar && !bar.hidden) hideOriginal(source.node);
+    if (bar && !bar.hidden) hideCaptions();
 
-    if (text === lastSource) {
-      place();
+    if (text !== lastSource) {
+      /*
+       * Captions already in the target language need no bar at all. The source
+       * is still recorded, otherwise every poll would see a brand new line.
+       */
+      if (looksLikeTarget(text)) {
+        lastSource = text;
+        if (paragraph || pending) {
+          hide();
+          pending = '';
+          context = '';
+          paragraph = '';
+          jobs.length = 0;
+          paragraphGen++;
+        }
+        return;
+      }
+      const delta = deltaOf(lastSource, text);
+      lastSource = text;
+      if (delta) {
+        // Two cues of the same sentence need the space the caption split lost.
+        const gap = pending && /[A-Za-z0-9,.!?]$/.test(pending) && /^[A-Za-z0-9]/.test(delta) ? ' ' : '';
+        pending += gap + delta;
+        lastGrowth = now;
+      }
+    }
+
+    if (!pending) {
+      if (bar && !bar.hidden) place();
       return;
     }
-    lastSource = text;
 
-    if (text.length < 2 || looksLikeTarget(text)) {
-      hide();
+    // The passage closes at the first of: sentence end, length, or a pause.
+    const idle = now - lastGrowth;
+    const complete = pending.length >= CHUNK_MIN && endsSentence(pending);
+    if (pending.length >= CHUNK_MAX || complete || idle > CHUNK_IDLE_MS) {
+      flush();
       return;
     }
-
-    const mine = ++token;
-    translate(text)
-      .then((out) => {
-        if (mine !== token) return;
-        if (out) show(out, source.node);
-        else hide();
-      })
-      .catch(() => {});
+    if (bar && !bar.hidden) place();
   }
 
   chrome.runtime

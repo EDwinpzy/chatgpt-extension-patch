@@ -93,6 +93,7 @@ body {
 [data-icon="clock"] { -webkit-mask-image: url("icons/clock.svg"); mask-image: url("icons/clock.svg"); }
 [data-icon="folder"] { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
 [data-icon="grip"] { -webkit-mask-image: url("icons/grip.svg"); mask-image: url("icons/grip.svg"); }
+[data-icon="moon"] { -webkit-mask-image: url("icons/moon.svg"); mask-image: url("icons/moon.svg"); }
 
 .cards { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 

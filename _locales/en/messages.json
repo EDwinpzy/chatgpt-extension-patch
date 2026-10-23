@@ -1,0 +1,20 @@
+{
+   "addToBlacklist": {
+      "message": "Add to blacklist"
+   },
+   "disable": {
+      "message": "Disable"
+   },
+   "enable": {
+      "message": "Enable"
+   },
+   "extName": {
+      "message": "Darkling Dark mode"
+   },
+   "extShortDesc": {
+      "message": "Darkling Dark mode - Turn on dark mode for web sites"
+   },
+   "removeFromBlacklist": {
+      "message": "Remove from blacklist"
+   }
+}

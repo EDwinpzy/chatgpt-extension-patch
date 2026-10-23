@@ -58,6 +58,87 @@ function extractHostname(url) {
   }
 }
 
+const PAGE_FETCH_TIMEOUT_MS = 4000;
+const PAGE_FETCH_CONCURRENCY = 6;
+const PAGE_SNIPPET_LIMIT = 400;
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+function getMetaContent(html, key) {
+  const patterns = [
+    new RegExp(`<meta[^>]+(?:name|property)=["']${key}["'][^>]*content=["']([^"']*)["']`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:name|property)=["']${key}["']`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) return decodeHtmlEntities(match[1]).trim();
+  }
+  return '';
+}
+
+async function fetchPageSummary(url) {
+  if (!isHttpUrl(url)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    if (!response || !response.ok) return null;
+    const html = (await response.text()).slice(0, 200000);
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    let title = titleMatch ? decodeHtmlEntities(titleMatch[1]).replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    let description = getMetaContent(html, 'description');
+    if (!description) description = getMetaContent(html, 'og:description');
+    if (!title) {
+      const ogTitle = getMetaContent(html, 'og:title');
+      if (ogTitle) title = ogTitle.slice(0, 200);
+    }
+    const snippet = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, PAGE_SNIPPET_LIMIT);
+    if (!title && !description && !snippet) return null;
+    return { title, description, snippet };
+  } catch (error) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function enrichBookmarks(bookmarks) {
+  const enriched = (bookmarks || []).map((bookmark) => ({ ...bookmark }));
+  for (let i = 0; i < enriched.length; i += PAGE_FETCH_CONCURRENCY) {
+    const batch = enriched.slice(i, i + PAGE_FETCH_CONCURRENCY);
+    await Promise.all(batch.map(async (bookmark) => {
+      const summary = await fetchPageSummary(bookmark.url);
+      bookmark.pageTitle = summary ? summary.title : '';
+      bookmark.pageDescription = summary ? summary.description : '';
+      bookmark.pageSnippet = summary ? summary.snippet : '';
+    }));
+  }
+  return enriched;
+}
+
 /**
  * 域名规则表：域名(去www) → 推荐分类
  * 确定性规则优先于AI判断，命中即不再调用AI，保证常见站点分类100%准确
@@ -292,25 +373,34 @@ const KEYWORD_RULES = [
  * @param {Set<string>} categoryNameSet - 用户分类体系中的合法分类名（小写归一）
  * @returns {string|null} 命中的分类名；未命中返回null
  */
+function hasPageContent(bm) {
+  return Boolean(bm && (bm.pageTitle || bm.pageDescription || bm.pageSnippet));
+}
+
 function matchRule(bm, categoryNameSet) {
   const host = extractHostname(bm.url);
   const title = (bm.name || '').toLowerCase();
+  // 页面内容也参与关键词匹配，避免仅按名称/域名猜测
+  const pageText = [bm.name, bm.pageTitle, bm.pageDescription, bm.pageSnippet]
+    .filter(Boolean).join(' ').toLowerCase();
 
-  // 域名规则（优先，比关键词更可靠）
-  for (const rule of DOMAIN_RULES) {
-    const target = normalizeCategoryName(rule.category);
-    if (!categoryNameSet.has(target)) continue; // 用户分类体系中没有该分类，跳过此规则
-    if (rule.domains.some(d => host === d || host.endsWith('.' + d))) {
-      return rule.category;
+  // 只有成功读取页面内容时，才不盲从域名；页面不可用时再回退域名规则
+  if (!hasPageContent(bm)) {
+    for (const rule of DOMAIN_RULES) {
+      const target = normalizeCategoryName(rule.category);
+      if (!categoryNameSet.has(target)) continue; // 用户分类体系中没有该分类，跳过此规则
+      if (rule.domains.some(d => host === d || host.endsWith('.' + d))) {
+        return rule.category;
+      }
     }
   }
 
-  // 标题关键词规则
+  // 标题/页面内容关键词规则
   for (const rule of KEYWORD_RULES) {
     const target = normalizeCategoryName(rule.category);
     if (!categoryNameSet.has(target)) continue;
-    if (rule.keywords.some(k => title.includes(k))) return rule.category;
-    if (rule.regex && rule.regex.test(title)) return rule.category;
+    if (rule.keywords.some(k => pageText.includes(k))) return rule.category;
+    if (rule.regex && rule.regex.test(pageText)) return rule.category;
   }
 
   return null;
@@ -388,7 +478,12 @@ function buildClassifyPrompt(bookmarks, categories, instruction = '') {
     const createdAt = hasInstruction
       ? ` | 创建时间:${formatBookmarkDateAdded(bm.dateAdded)}`
       : '';
-    return `${i + 1}. [ID:${bm.id}] "${bm.name}"${createdAt} | 域名:${host} | URL:${bm.url}`;
+    const pageBits = [];
+    if (bm.pageTitle) pageBits.push(`页面标题:${bm.pageTitle}`);
+    if (bm.pageDescription) pageBits.push(`页面描述:${bm.pageDescription}`);
+    if (bm.pageSnippet) pageBits.push(`页面摘要:${bm.pageSnippet}`);
+    const pageContext = pageBits.length ? ` | ${pageBits.join(' | ')}` : ' | 页面内容:未获取';
+    return `${i + 1}. [ID:${bm.id}] "${bm.name}"${createdAt} | 域名:${host} | URL:${bm.url}${pageContext}`;
   }).join('\n');
 
   // few-shot 示例（与默认分类体系对应）
@@ -409,7 +504,7 @@ ${categoryList}
 规则：
 1. 只能使用上面列出的分类名，不要创建新分类；
 2. 优先归入最具体的子分类；拿不准时归入对应一级分类；
-3. 根据书签名称和URL域名，选择语义最接近的分类；
+3. 根据书签名称、URL域名，以及打开页面后获取的页面标题、描述和正文摘要，选择语义最接近的分类；不要仅按域名或名称猜测；
 4. 仅当书签确实无法归入任何分类、或信息过于模糊时，才归入"工具"；
 5. 不要因为不确定就随意放入"工具"。${customRule}
 
@@ -1008,10 +1103,12 @@ async function classifyBookmarks(bookmarks, settings, onProgress) {
   const instruction = settings.instruction == null ? '' : String(settings.instruction);
   const hasInstruction = instruction.trim().length > 0;
 
+  // 先打开页面读取实际内容，再分类，避免仅按名称/域名猜测
+  const enrichedBookmarks = await enrichBookmarks(bookmarks);
   // 确定性规则先行：域名/关键词命中的书签不调用AI，保证准确性并节省API调用
   const { ruled, unrouted } = hasInstruction
-    ? { ruled: [], unrouted: bookmarks }
-    : applyRules(bookmarks, validCategories);
+    ? { ruled: [], unrouted: enrichedBookmarks }
+    : applyRules(enrichedBookmarks, validCategories);
   const allResults = [...ruled];
 
   const total = Math.ceil(unrouted.length / BATCH_SIZE);
@@ -1054,11 +1151,15 @@ async function classifyBookmarks(bookmarks, settings, onProgress) {
 async function classifySingleBookmark(bookmark, settings) {
   const validCategories = collectValidCategories(settings.categories || DEFAULT_CATEGORIES);
 
+  // 先打开页面读取实际内容，再分类，避免仅按名称/域名猜测
+  const enriched = await enrichBookmarks([bookmark]);
+  const targetBookmark = enriched[0] || bookmark;
+
   // 确定性规则先行
-  const { ruled } = applyRules([bookmark], validCategories);
+  const { ruled } = applyRules([targetBookmark], validCategories);
   if (ruled.length > 0) return ruled[0].category;
 
-  const results = await classifyBatch([bookmark], settings);
+  const results = await classifyBatch([targetBookmark], settings);
   if (results.length > 0 && results[0].category) {
     const validated = validateResults(results, validCategories);
     if (validated.length > 0) {

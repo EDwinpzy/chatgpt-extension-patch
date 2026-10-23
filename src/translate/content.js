@@ -1091,6 +1091,21 @@
     measure(unit);
   }
 
+  /*
+   * Only this script knows whether the page currently shows translated text,
+   * and the right-click item says "翻译网页" or "还原翻译" depending on it, so
+   * every state change is reported back to the worker.
+   */
+  function reportPageState(translated) {
+    try {
+      chrome.runtime
+        .sendMessage({ type: 'translate:page-state', translated: Boolean(translated) })
+        .catch(() => {});
+    } catch (error) {
+      /* the worker is gone; the menu then falls back to "翻译网页" */
+    }
+  }
+
   function restorePage() {
     if (pageRun) pageRun.cancelled = true;
     document.querySelectorAll('[' + MARK + ']').forEach((element) => {
@@ -1119,6 +1134,7 @@
     translatedRuns = new WeakSet();
     hideProgress();
     pageRun = null;
+    reportPageState(false);
   }
 
   async function translateUnitBatch(units) {
@@ -1211,6 +1227,9 @@
     if (!run.cancelled && !quiet) {
       renderProgress(units.length, units.length, '已翻译 ' + units.length + ' 段');
       setTimeout(hideProgress, 1500);
+    }
+    if (!run.cancelled) {
+      reportPageState(true);
     }
     run.finished = true;
     if (quiet) noteState('quiet:done ' + units.length + (run.cancelled ? ' cancelled' : ''));

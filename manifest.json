@@ -19,6 +19,13 @@
       },
       "open-codex-side-panel": {
          "description": "Open ChatGPT side panel"
+      },
+      "toggle-darkling": {
+         "suggested_key": {
+            "default": "Alt+Shift+D",
+            "mac": "Alt+Shift+D"
+         },
+         "description": "切换暗色模式 (Darkling)"
       }
    },
    "content_scripts": [ {
@@ -55,6 +62,7 @@
          "path": "rules/chatgpt-frame.json"
       } ]
    },
+   "default_locale": "zh_CN",
    "description": "Control your browser with ChatGPT.",
    "host_permissions": [ "\u003Call_urls>" ],
    "icons": {
@@ -79,6 +87,6 @@
    "version": "1.26.901.11451",
    "web_accessible_resources": [ {
       "matches": [ "\u003Call_urls>" ],
-      "resources": [ "images/cursor-chat.png" ]
+      "resources": [ "images/cursor-chat.png", "darkling/js/proxy.js" ]
    } ]
 }

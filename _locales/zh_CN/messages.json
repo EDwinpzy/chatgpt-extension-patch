@@ -1,0 +1,20 @@
+{
+   "addToBlacklist": {
+      "message": "添加到黑名单"
+   },
+   "disable": {
+      "message": "禁用"
+   },
+   "enable": {
+      "message": "启用"
+   },
+   "extName": {
+      "message": "Darkling 暗黑模式"
+   },
+   "extShortDesc": {
+      "message": "Darkling 暗黑模式 - 为网站开启暗黑模式"
+   },
+   "removeFromBlacklist": {
+      "message": "从黑名单移除"
+   }
+}

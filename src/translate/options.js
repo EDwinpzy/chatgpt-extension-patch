@@ -891,6 +891,101 @@ $('clearCache').addEventListener('click', async () => {
   window.setTimeout(() => { button.textContent = '清空缓存'; }, 1800);
 });
 
+/* -------------------------------------------------------------- darkling */
+
+/*
+ * The dark-mode engine keeps its own state in storage.local ("enabled" /
+ * "blacklist"), and caches it in the service worker. Writes therefore go
+ * through the engine's message API, never straight to storage.
+ */
+
+async function readDarklingState() {
+  const [stored, enabled] = await Promise.all([
+    chrome.storage.local.get(['enabled', 'blacklist']).catch(() => ({})),
+    send({ action: 'isEnabled' }).catch(() => null),
+  ]);
+  return {
+    enabled: typeof enabled === 'boolean' ? enabled : Boolean(stored && stored.enabled),
+    blacklist: Array.isArray(stored && stored.blacklist) ? stored.blacklist : [],
+  };
+}
+
+function paintDarklingSwitch(on) {
+  const button = $('darklingEnabled');
+  button.classList.toggle('on', Boolean(on));
+  button.setAttribute('aria-checked', String(Boolean(on)));
+}
+
+// The engine stores a root domain plus its wildcard entry; show one row per site.
+function darklingDomains(list) {
+  const domains = [];
+  list.forEach((entry) => {
+    const domain = String(entry || '').replace(/^\*\./, '');
+    if (domain && !domains.includes(domain)) domains.push(domain);
+  });
+  return domains;
+}
+
+// The engine answers these calls before it has written to storage, so give the
+// write a moment before reading the list back.
+const darklingSettled = () => new Promise((resolve) => window.setTimeout(resolve, 250));
+
+function darklingChip(domain) {
+  const chip = document.createElement('span');
+  chip.className = 'entry';
+  chip.textContent = domain;
+  const remove = document.createElement('button');
+  remove.textContent = '×';
+  remove.title = '删除';
+  remove.addEventListener('click', async () => {
+    remove.disabled = true;
+    await send({ action: 'removeFromBlacklist', url: domain }).catch(() => null);
+    await darklingSettled();
+    renderDarkling();
+  });
+  chip.appendChild(remove);
+  return chip;
+}
+
+async function renderDarkling() {
+  const { enabled, blacklist } = await readDarklingState();
+  paintDarklingSwitch(enabled);
+
+  const container = $('darklingBlacklist');
+  const domains = darklingDomains(blacklist);
+  container.textContent = '';
+  domains.forEach((domain) => container.appendChild(darklingChip(domain)));
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'example.com';
+  input.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter') return;
+    const value = input.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!value) return;
+    input.value = '';
+    await send({ action: 'addToBlacklist', url: 'https://' + value }).catch(() => null);
+    await darklingSettled();
+    renderDarkling();
+  });
+  container.appendChild(input);
+  $('darklingBlacklistCount').textContent = domains.length + ' 个';
+}
+
+$('darklingEnabled').addEventListener('click', async () => {
+  const next = !$('darklingEnabled').classList.contains('on');
+  paintDarklingSwitch(next);
+  await send({ action: next ? 'enable' : 'disable' }).catch(() => null);
+  // The engine flips its own state before answering, so read it back.
+  const enabled = await send({ action: 'isEnabled' }).catch(() => null);
+  paintDarklingSwitch(typeof enabled === 'boolean' ? enabled : next);
+});
+
+// The panel and the context menu can change the switch while this page stays open.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') renderDarkling().catch(() => {});
+});
+
 /* ------------------------------------------------------------------ init */
 
 async function init() {
@@ -900,6 +995,7 @@ async function init() {
   renderGlossary();
   renderSubtitle();
   renderSiteList('blockedSites', 'blockedSiteCount', 'blockedSites');
+  renderDarkling();
 }
 
 init().catch((error) => {

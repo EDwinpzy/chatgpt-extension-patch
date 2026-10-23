@@ -17,6 +17,8 @@
     <button class="item" data-pane="sites"><span class="ico" data-icon="list"></span>站点规则</button>
     <div class="group">书签</div>
     <button class="item" data-pane="bookmarks"><span class="ico" data-icon="bookmark"></span>书签整理</button>
+    <div class="group">外观</div>
+    <button class="item" data-pane="darkmode"><span class="ico" data-icon="moon"></span>暗色模式</button>
   </nav>
 
   <main class="pane">
@@ -136,6 +138,23 @@
         <div class="label"><b>翻译缓存</b><span>重复内容不再重复调用模型</span></div>
         <button id="clearCache" class="btn ghost">清空缓存</button>
       </div>
+    </section>
+
+    <section class="view" id="view-darkmode" hidden>
+      <h1>暗色模式</h1>
+      <p class="desc">Darkling 引擎：重写站点样式表，处理不了的页面退回滤镜。开启后对所有网站生效，黑名单除外。</p>
+
+      <div class="row toggle-row">
+        <div class="label"><b>启用暗色模式</b><span>关掉立刻恢复原样</span></div>
+        <button id="darklingEnabled" class="switch" role="switch" aria-checked="false"><i></i></button>
+      </div>
+
+      <div class="row">
+        <div class="label"><b>黑名单</b><span>这些网站不启用暗色</span></div>
+        <span class="tag" id="darklingBlacklistCount">0 个</span>
+      </div>
+      <div class="sitelist" id="darklingBlacklist"></div>
+      <p class="note">输入域名回车添加；也可以在网页上右键「添加到暗色模式黑名单」。</p>
     </section>
 
     <section class="view" id="view-bookmarks" hidden>

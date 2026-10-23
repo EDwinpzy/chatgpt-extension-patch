@@ -325,15 +325,14 @@ function pickGlossaryFor(texts, glossary) {
     .slice(0, 40);
 }
 
-function buildMessages(lang, texts, glossary, options) {
-  const input = texts.map((text, index) => '[' + (index + 1) + '] ' + text).join('\n');
-  const name = targetLangName(lang);
-  /*
-   * Two kinds of entry arrive here. "Term -> 译法" forces a rendering. A name
-   * written on both sides ("ChatGPT -> ChatGPT") means "leave this alone", and
-   * saying that in words beats showing the model a glossary line where both
-   * sides are identical - which it happily reads as an ordinary entry.
-   */
+/*
+ * The glossary lines for a prompt. Two kinds of entry arrive here. "Term ->
+ * 译法" forces a rendering. A name written on both sides ("ChatGPT ->
+ * ChatGPT") means "leave this alone", and saying that in words beats showing
+ * the model a glossary line where both sides are identical - which it happily
+ * reads as an ordinary entry.
+ */
+function glossaryLines(glossary) {
   const list = Array.isArray(glossary) ? glossary : [];
   const kept = translateKeepNames(list).map((entry) => String(entry.from).trim());
   const names = kept.length
@@ -345,6 +344,44 @@ function buildMessages(lang, texts, glossary, options) {
     ? '\nGlossary (these terms MUST use the exact translations):\n' +
       terms.map((entry) => '- ' + entry.from + ' -> ' + entry.to).join('\n')
     : '';
+  return { names, translations };
+}
+
+/*
+ * Subtitles travel a different road from the rest of the page. A passage is
+ * spoken while it is translated, so the request has to leave at once and carry
+ * as few tokens as possible: the interface-copy prompt is both long and wrong
+ * here, and the numbered-line protocol would ask the model to preserve a line
+ * structure the viewer never sees. What is read is one flowing paragraph.
+ *
+ * The lines above the passage come along as context - not to be translated
+ * again, but so pronouns, names and terms carry over from sentence to
+ * sentence instead of each passage starting cold.
+ */
+function buildSubtitleMessages(lang, texts, glossary, options) {
+  const name = targetLangName(lang);
+  const context = String((options && options.context) || '').trim();
+  const { names, translations } = glossaryLines(glossary);
+  const task =
+    'Translate video subtitles into ' + name + '. The lines are what the viewer hears, in order. ' +
+    'Translate them as one continuous, natural spoken passage: keep the flow of speech, keep names and ' +
+    'numbers as they are, never add explanations, labels or notes, and never translate the context lines ' +
+    'twice. Output only the translated passage, as plain text.';
+  const body = texts.join(' ');
+  const user = context
+    ? 'Earlier subtitle lines, for context only - do not repeat or translate them:\n' + context + '\n\nTranslate now:\n' + body
+    : body;
+  return [
+    { role: 'system', content: task + names + translations },
+    { role: 'user', content: user },
+  ];
+}
+
+function buildMessages(lang, texts, glossary, options) {
+  if (options && options.purpose === 'subtitle') return buildSubtitleMessages(lang, texts, glossary, options);
+  const input = texts.map((text, index) => '[' + (index + 1) + '] ' + text).join('\n');
+  const name = targetLangName(lang);
+  const { names, translations } = glossaryLines(glossary);
   const budgets = options && Array.isArray(options.budgets) ? options.budgets : [];
   const limits = budgets.some((value) => value > 0)
     ? '\nHard length limits, count characters of the result:\n' +
@@ -956,6 +993,8 @@ async function translateTexts(texts, targetLang, purpose, options) {
   await loadCacheOnce();
 
   const budgets = options && Array.isArray(options.budgets) ? options.budgets : [];
+  /* What a subtitle passage follows on from; ignored by every other purpose. */
+  const context = options && typeof options.context === 'string' ? options.context : '';
   const results = new Array(texts.length);
   const pending = [];
   /* Merged once, used for both the prompt and the name-only shortcut. */
@@ -1018,6 +1057,8 @@ async function translateTexts(texts, targetLang, purpose, options) {
         const glossary = pickGlossaryFor(payload, allTerms);
         const messages = buildMessages(lang, payload, glossary, {
           budgets: batch.map((entry) => entry.budget),
+          purpose,
+          context,
         });
         calls++;
         const raw = await callModel(messages, {
@@ -1157,7 +1198,10 @@ async function handleTranslateBatch(message) {
   if (texts.length === 0) return { ok: true, translations: [] };
   try {
     const budgets = Array.isArray(message.budgets) ? message.budgets : [];
-    const out = await translateTexts(texts, message.targetLang, message.purpose, { budgets });
+    const out = await translateTexts(texts, message.targetLang, message.purpose, {
+      budgets,
+      context: typeof message.context === 'string' ? message.context : '',
+    });
     return { ok: true, translations: out.translations, calls: out.calls };
   } catch (error) {
     return { ok: false, error: String((error && error.message) || error) };
@@ -1277,46 +1321,82 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 /* ----------------------------------------------------------- context menu */
 
+/*
+ * The items themselves are created in darkling/glue.js, which owns the whole
+ * menu so the order stays stable across the three modules that used to create
+ * them. This file keeps the ids, tracks which tabs are already translated, and
+ * handles the clicks.
+ */
+
 const TRANSLATE_MENU = {
   SELECTION: 'translate-selection',
   PAGE: 'translate-page',
   SUMMARY: 'translate-summary',
-  RESTORE: 'translate-restore',
   SETTINGS: 'translate-settings',
 };
 
-function createTranslateMenus() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: TRANSLATE_MENU.SELECTION,
-      title: '翻译选中文字',
-      contexts: ['selection'],
-    });
-    chrome.contextMenus.create({
-      id: TRANSLATE_MENU.PAGE,
-      title: '翻译整页',
-      contexts: ['page'],
-    });
-    chrome.contextMenus.create({
-      id: TRANSLATE_MENU.SUMMARY,
-      title: '总结全文',
-      contexts: ['page'],
-    });
-    chrome.contextMenus.create({
-      id: TRANSLATE_MENU.RESTORE,
-      title: '还原本页原文',
-      contexts: ['page'],
-    });
-    chrome.contextMenus.create({
-      id: TRANSLATE_MENU.SETTINGS,
-      title: '翻译设置',
-      contexts: ['page', 'selection'],
-    });
+const translatedTabs = new Set();
+
+/*
+ * The worker sleeps after a few idle seconds, and the menu title has to survive
+ * that: the set is mirrored into session storage and read back on the next wake.
+ */
+const PAGE_STATE_KEY = 'translatePageState';
+let pageStateReady = null;
+
+function persistPageStates() {
+  const bag = {};
+  translatedTabs.forEach((id) => {
+    bag[id] = true;
   });
+  chrome.storage.session.set({ [PAGE_STATE_KEY]: bag }).catch(() => {});
 }
 
-chrome.runtime.onInstalled.addListener(createTranslateMenus);
-chrome.runtime.onStartup.addListener(createTranslateMenus);
+function ensurePageStates() {
+  if (!pageStateReady) {
+    pageStateReady = chrome.storage.session
+      .get(PAGE_STATE_KEY)
+      .then((bag) => {
+        const stored = (bag && bag[PAGE_STATE_KEY]) || {};
+        Object.keys(stored).forEach((id) => {
+          if (stored[id]) translatedTabs.add(Number(id));
+        });
+      })
+      .catch(() => {});
+  }
+  return pageStateReady;
+}
+
+function isPageTranslated(tabId) {
+  return translatedTabs.has(tabId);
+}
+
+function setPageTranslated(tabId, translated) {
+  if (typeof tabId !== 'number' || tabId < 0) return;
+  if (translated) translatedTabs.add(tabId);
+  else translatedTabs.delete(tabId);
+  persistPageStates();
+  if (typeof refreshContextMenus === 'function') refreshContextMenus();
+}
+
+ensurePageStates();
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (!message || message.type !== 'translate:page-state') return false;
+  setPageTranslated(sender && sender.tab ? sender.tab.id : -1, Boolean(message.translated));
+  return false;
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (translatedTabs.delete(tabId)) persistPageStates();
+});
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  // A navigation carries a new document, so the old translation is gone.
+  if ((change.status === 'loading' || change.url) && translatedTabs.delete(tabId)) {
+    persistPageStates();
+  }
+  if (typeof scheduleMenuRefresh === 'function') scheduleMenuRefresh();
+});
 
 /* ------------------------------------------------------- 总结全文: the flow */
 
@@ -1419,15 +1499,13 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
   if (!tab || typeof tab.id !== 'number') return;
   if (info.menuItemId === TRANSLATE_MENU.PAGE) {
-    chrome.tabs.sendMessage(tab.id, { type: 'translate:translate-page' }).catch(() => {});
+    // One item, two directions: whatever the page is showing decides the label.
+    const type = isPageTranslated(tab.id) ? 'translate:restore-page' : 'translate:translate-page';
+    chrome.tabs.sendMessage(tab.id, { type }).catch(() => {});
     return;
   }
   if (info.menuItemId === TRANSLATE_MENU.SUMMARY) {
     summarizeIntoPanel(tab);
-    return;
-  }
-  if (info.menuItemId === TRANSLATE_MENU.RESTORE) {
-    chrome.tabs.sendMessage(tab.id, { type: 'translate:restore-page' }).catch(() => {});
     return;
   }
   if (info.menuItemId === TRANSLATE_MENU.SELECTION) {
@@ -1436,5 +1514,3 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       .catch(() => {});
   }
 });
-
-createTranslateMenus();

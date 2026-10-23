@@ -11,6 +11,10 @@
  * last the bookmark port: its classifier reuses the translation settings
  * (the model list and the "thinking off" fields) and its worker registers the
  * bookmark listeners, which have to be in place every time the worker starts.
+ *
+ * The Darkling dark-mode engine is appended last: it owns its own listeners and
+ * storage keys, and darkling/glue.js (which must load after it) adds the
+ * context-menu and shortcut entry points for it.
  */
 
 importScripts(
@@ -20,5 +24,7 @@ importScripts(
   '../bookmarks/lib/bookmark-utils.js',
   '../bookmarks/lib/deduplicator.js',
   '../bookmarks/lib/classifier.js',
-  '../bookmarks/worker.js'
+  '../bookmarks/worker.js',
+  '../darkling/js/background.js',
+  '../darkling/glue.js'
 );

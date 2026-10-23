@@ -24,4 +24,8 @@ desktop.ini
 
 # Workspace-local notes and Edge-generated metadata
 .workbuddy-ai/
+.workbuddy/
 _metadata/
+
+# One-off patch scripts
+tools/_tmp_patch*.py
